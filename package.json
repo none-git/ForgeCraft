@@ -8,6 +8,7 @@
     "dev": "nodemon src/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.74.0",
     "dotenv": "^17.2.0",
     "node-telegram-bot-api": "^0.66.0"
   }

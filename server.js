@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import TelegramBot from 'node-telegram-bot-api';
 dotenv.config();
@@ -31,6 +32,10 @@ const users = [
 ];
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const db = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+);
 const sessions = {};
 //=============================================================|
 bot.onText(/\/message(?:\s+(\S+))?/, async (msg, match) => {
@@ -69,18 +74,7 @@ bot.onText(/\/support/, (msg) => {
   bot.sendMessage(msg.chat.id, 'لطفا پیامتون رو وارد کنید');
 });
 
-bot.onText(/\/random_koony/, (msg) => {
-  const randomUser = users[Math.floor(Math.random() * users.length)];
-  bot.sendMessage(msg.chat.id, `🍑@${randomUser} کونیه`);
-});
-
-bot.onText(/\/random_kiss/, (msg) => {
-  const randomUser1 = users[Math.floor(Math.random() * users.length)];
-  const randomUser2 = users[Math.floor(Math.random() * users.length)];
-  bot.sendMessage(msg.chat.id, `@${randomUser1} 💏 @${randomUser2}`);
-});
-
-bot.onText(/\/fact(?:\s+(\S+))?/, async (msg, match) => {
+bot.onText(/\/fact(?:\s+(\S+))?/, (msg, match) => {
   if (!match[1]) {
     return bot.sendMessage(
       msg.chat.id,
@@ -113,14 +107,193 @@ bot.onText(/\/fact(?:\s+(\S+))?/, async (msg, match) => {
   const fact = facts[Math.floor(Math.random() * facts.length)];
   bot.sendMessage(msg.chat.id, fact.replace('{user}', match[1]));
 });
+
+bot.onText(/\/create/, async (msg) => {
+  const user = msg.from;
+  try {
+    const { data: player } = await db
+      .from('players')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (player)
+      return bot.sendMessage(msg.chat.id, '⚠️ You already have a character.');
+
+    const { error: insertError } = await db.from('players').insert([
+      {
+        id: user.id,
+        username: user.username,
+      },
+    ]);
+    if (insertError) throw insertError;
+
+    bot.sendMessage(
+      msg.chat.id,
+      `✅ Character "${user.username}" created successfully.`,
+    );
+  } catch (err) {
+    console.error('DB Error:', err);
+    bot.sendMessage(
+      msg.chat.id,
+      '❌ An error occurred while creating your character.',
+    );
+  }
+});
+
+bot.onText(/\/profile(?:\s+(\S+))?/, async (msg, match) => {
+  const username = match[1] ? match[1].slice(1) : msg.from.username;
+  try {
+    const { data: player } = await db
+      .from('players')
+      .select('*')
+      .eq('username', username)
+      .maybeSingle();
+    if (!player) {
+      if (match[1]) {
+        return bot.sendMessage(msg.chat.id, '⚠️ Character not found.');
+      } else {
+        return bot.sendMessage(msg.chat.id, '⚠️ You dont have a character.');
+      }
+    }
+    const { data: items } = await db
+      .from('player_items')
+      .select(`*, data:items(*)`)
+      .eq('player_id', player.id);
+
+    const equipped = {
+      weapon: items.find((x) => x.data.type === 'weapon' && x.status),
+      shield: items.find((x) => x.data.type === 'shield' && x.status),
+      chest: items.find((x) => x.data.type === 'chest' && x.status),
+      head: items.find((x) => x.data.type === 'head' && x.status),
+      legs: items.find((x) => x.data.type === 'legs' && x.status),
+      arms: items.find((x) => x.data.type === 'arms' && x.status),
+    };
+    function calcTotal(stat) {
+      return (
+        player.level * (stat === 'armor' ? 5 : 1) +
+        Object.values(equipped).reduce(
+          (sum, item) => sum + (item?.data?.[stat] ?? 0),
+          0,
+        )
+      );
+    }
+
+    bot.sendMessage(
+      msg.chat.id,
+      `
+⭐*Level:  ${player.level}*
+
+🛡️*Armor:  ${calcTotal('armor')}*
+💪*Strength:  ${calcTotal('strength')}*
+❤️*Stamina:  ${calcTotal('stamina')}*
+
+*weapon:  ${equipped.weapon?.data.name ?? 'none'}*
+*shield:  ${equipped.shield?.data.name ?? 'none'}*
+*chest:  ${equipped.chest?.data.name ?? 'none'}*
+*head:  ${equipped.head?.data.name ?? 'none'}*
+*legs:  ${equipped.legs?.data.name ?? 'none'}*
+*arms:  ${equipped.arms?.data.name ?? 'none'}*
+      `,
+      { parse_mode: 'MarkdownV2' },
+    );
+  } catch (err) {
+    console.error('DB Error:', err);
+    bot.sendMessage(
+      msg.chat.id,
+      '❌ An error occurred while geting charecter profile data.',
+    );
+  }
+});
+
+bot.onText(/\/items(?:\s+(\S+))?/, async (msg, match) => {
+  const username = match[1] ? match[1].slice(1) : msg.from.username;
+  try {
+    const { data: player } = await db
+      .from('players')
+      .select('*')
+      .eq('username', username)
+      .maybeSingle();
+    if (!player) {
+      if (match[1]) {
+        return bot.sendMessage(msg.chat.id, '⚠️ Character not found.');
+      } else {
+        return bot.sendMessage(msg.chat.id, '⚠️ You dont have a character.');
+      }
+    }
+    const { data: items } = await db
+      .from('player_items')
+      .select(`*, data:items(*)`)
+      .eq('player_id', player.id);
+
+    let message = '';
+    items.forEach((item) => {
+      if (message)
+        message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+      message += `
+*${item.data.name}*     *Type:*  ${item.data.type}     *ID:  ${item.id}*
+Armor:  *${item.data.armor}*   \\|   Strength:  *${item.data.strength}*   \\|   Stamina:  *${item.data.stamina}*
+      `;
+    });
+    if (!items?.length) message = '*No item*';
+    bot.sendMessage(msg.chat.id, message, { parse_mode: 'MarkdownV2' });
+  } catch (err) {
+    console.error('DB Error:', err);
+    bot.sendMessage(
+      msg.chat.id,
+      '❌ An error occurred while geting charecter items data.',
+    );
+  }
+});
+
+bot.onText(/\/equipe(?:\s+(\S+))?/, async (msg, match) => {
+  const userId = msg.from.id;
+  const itemId = match[1];
+  if (!itemId) {
+    return bot.sendMessage(
+      msg.chat.id,
+      '⚠️ Enter your item ID\nLike:\n/equipe 123',
+    );
+  }
+  try {
+    const { data: player } = await db
+      .from('players')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+    if (!player)
+      return bot.sendMessage(msg.chat.id, '⚠️ You dont have a character.');
+    const { data: item } = await db
+      .from('player_items')
+      .select(`*, data:items(*)`)
+      .match({ player_id: player.id, id: itemId })
+      .maybeSingle();
+    if (!item)
+      return bot.sendMessage(msg.chat.id, '⚠️ You dont have this item');
+
+    await db.from('player_items').update({ status: false }).eq('id', itemId);
+    await db.from('player_items').update({ status: true }).eq('id', itemId);
+
+    bot.sendMessage(msg.chat.id, `*${item.data.name}* equiped successfully`, {
+      parse_mode: 'MarkdownV2',
+    });
+  } catch (err) {
+    console.error('DB Error:', err);
+    bot.sendMessage(
+      msg.chat.id,
+      '❌ An error occurred while geting charecter items data.',
+    );
+  }
+});
 //=============================================================|
 bot.on('message', (msg) => {
   const message = msg.text;
   if (message.startsWith('/message')) return;
   if (message.startsWith('/support')) return;
-  if (message.startsWith('/random_koony')) return;
-  if (message.startsWith('/random_kiss')) return;
   if (message.startsWith('/fact')) return;
+  if (message.startsWith('/create')) return;
+  if (message.startsWith('/profile')) return;
+  if (message.startsWith('/items')) return;
+  if (message.startsWith('/equipe')) return;
 
   if (message === 'لغو') {
     return delete sessions[msg.from.id];
@@ -150,4 +323,3 @@ bot.on('message', (msg) => {
   delete sessions[msg.from.id];
 });
 //=============================================================|
-// sendToTelegram({ message: 'ربات با موفقیت آنلاین شد' });

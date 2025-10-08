@@ -25,11 +25,25 @@ const users = [
 ];
 
 export default {
+  // ========================== Scheduled ========================== //
   async scheduled(event, env, ctx) {
     const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     ctx.waitUntil(
       (async () => {
+        //------------------------------------------//
+        const { data: actions } = await db.from('action_house').select('*');
+        if (!actions?.length) {
+          for (const action of actions) {
+            const created = new Date(action.created_at);
+            const now = new Date();
+            const diffMinutes = Math.floor((now - created) / (1000 * 60));
+            if (diffMinutes >= 60 * 24 * 3) {
+              await db.from('action_house').delete().eq('id', action.id);
+            }
+          }
+        }
+        //------------------------------------------//
         const { data: adventures } = await db
           .from('adventures')
           .select('*, item_reward:items(*), player:players(*)');
@@ -81,21 +95,21 @@ export default {
       })(),
     );
   },
+  // ========================== Fetch ========================== //
   async fetch(request, env) {
     if (request.method !== 'POST') return new Response('OK', { status: 200 });
     const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     const body = await request.json();
 
-    const getUserItems = async (userId) => {
+    const getPlayerItems = async (playerId) => {
       const { data: data, error: error } = await db
         .from('player_items')
         .select(`*, data:items(*)`)
-        .eq('player_id', userId);
+        .eq('player_id', playerId);
       if (error) throw error;
       return data;
     };
-
     const getUserProfile = async (items, playerLevel) => {
       const equipped = {
         weapon: items.find((x) => x.data.type === 'weapon' && x.status),
@@ -118,15 +132,15 @@ export default {
         stamina: calcTotal('stamina'),
       };
     };
-
+    // ---------------------- Commands ---------------------- //
     if (body.message && body.message.text) {
       const fromId = body.message.from.id;
       const chatId = body.message.chat.id;
       const text = body.message.text;
-      // ====================== Commands ======================
-      const factMatch = text.match(/\/fact(?:\s+(\S+))?/);
-      if (factMatch) {
-        if (!factMatch[1]) {
+      const textMatch = text.trim().split(/\s+/);
+      //------------------------------------------/fact
+      if (textMatch[0].startsWith('/fact')) {
+        if (!textMatch[1]) {
           await sendMessage(
             TELEGRAM_TOKEN,
             chatId,
@@ -161,8 +175,8 @@ export default {
         await sendMessage(TELEGRAM_TOKEN, chatId, fact.replace('{user}', factMatch[1]));
         return new Response('OK', { status: 200 });
       }
-
-      if (text === '/create') {
+      //------------------------------------------/create
+      if (textMatch[0].startsWith('/create')) {
         const username = body.message.from.username;
         try {
           const { data: player } = await db.from('players').select('id').eq('id', fromId).maybeSingle();
@@ -174,17 +188,16 @@ export default {
           const { error: insertError } = await db.from('players').insert([{ id: fromId, username }]);
           if (insertError) throw insertError;
 
-          await sendMessage(TELEGRAM_TOKEN, chatId, `✅ Character "${username}" created successfully.`);
+          await sendMessage(TELEGRAM_TOKEN, chatId, `✅ Character "${username}" created.`);
         } catch (err) {
           console.error('DB Error:', err);
           await sendMessage(TELEGRAM_TOKEN, chatId, '❌ An error occurred while creating your character.');
         }
         return new Response('OK', { status: 200 });
       }
-
-      const profileMatch = text.match(/\/profile(?:\s+(\S+))?/);
-      if (profileMatch) {
-        const username = profileMatch[1] ? profileMatch[1].slice(1) : body.message.from.username;
+      //------------------------------------------/profile
+      if (textMatch[0].startsWith('/profile')) {
+        const username = textMatch[1] ? textMatch[1].slice(1) : body.message.from.username;
         try {
           const { data: player } = await db
             .from('players')
@@ -195,11 +208,11 @@ export default {
             await sendMessage(
               TELEGRAM_TOKEN,
               chatId,
-              profileMatch[1] ? '⚠️ Character not found.' : '⚠️ You dont have a character.',
+              textMatch[1] ? '⚠️ Character not found.' : '⚠️ You dont have a character.',
             );
             return new Response('Error', { status: 200 });
           }
-          const items = await getUserItems(player.id);
+          const items = await getPlayerItems(player.id);
           const profile = await getUserProfile(items, player.level);
 
           await sendMessage(
@@ -233,10 +246,9 @@ export default {
         }
         return new Response('OK', { status: 200 });
       }
-
-      const itemsMatch = text.match(/\/items(?:\s+(\S+))?/);
-      if (itemsMatch) {
-        const username = itemsMatch[1] ? itemsMatch[1].slice(1) : body.message.from.username;
+      //------------------------------------------/items
+      if (textMatch[0].startsWith('/items')) {
+        const username = textMatch[1] ? textMatch[1].slice(1) : body.message.from.username;
         try {
           const { data: player } = await db
             .from('players')
@@ -247,11 +259,11 @@ export default {
             await sendMessage(
               TELEGRAM_TOKEN,
               chatId,
-              itemsMatch[1] ? '⚠️ Character not found.' : '⚠️ You dont have a character.',
+              textMatch[1] ? '⚠️ Character not found.' : '⚠️ You dont have a character.',
             );
             return new Response('Error', { status: 200 });
           }
-          const items = await getUserItems(player.id);
+          const items = await getPlayerItems(player.id);
 
           let message = '';
           items.forEach((item) => {
@@ -275,12 +287,11 @@ export default {
         }
         return new Response('OK', { status: 200 });
       }
-
-      const equipMatch = text.match(/\/equip(?:\s+(\S+))?/);
-      if (equipMatch) {
-        const itemId = equipMatch[1];
+      //------------------------------------------/equip
+      if (textMatch[0].startsWith('/equip')) {
+        const itemId = parseInt(textMatch[1]);
         if (!itemId) {
-          await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ Enter your item ID\nLike:\n/equipe 123');
+          await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ Enter your item ID\nLike:\n/equip 123');
           return new Response('Error', { status: 200 });
         }
         try {
@@ -289,7 +300,7 @@ export default {
             await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have a character.');
             return new Response('Error', { status: 200 });
           }
-          const items = await getUserItems(player.id);
+          const items = await getPlayerItems(player.id);
 
           const item = items.find((item) => item.id === parseInt(itemId));
           if (!item) {
@@ -300,7 +311,7 @@ export default {
           if (oldItem) await db.from('player_items').update({ status: false }).eq('id', oldItem.id);
           await db.from('player_items').update({ status: true }).eq('id', item.id);
 
-          await sendMessage(TELEGRAM_TOKEN, chatId, `*${item.data.name}* equipped successfully`, {
+          await sendMessage(TELEGRAM_TOKEN, chatId, `*${item.data.name}* equipped`, {
             parse_mode: 'MarkdownV2',
           });
         } catch (err) {
@@ -309,8 +320,8 @@ export default {
         }
         return new Response('OK', { status: 200 });
       }
-
-      if (text === '/adventure') {
+      //------------------------------------------/adventure
+      if (textMatch[0].startsWith('/adventure')) {
         try {
           const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
           if (!player) {
@@ -326,12 +337,74 @@ export default {
             await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You already in an adventure.');
             return new Response('Error', { status: 200 });
           }
-          const items = await getUserItems(player.id);
+          const items = await getPlayerItems(player.id);
           const profile = await getUserProfile(items, player.level);
-          const { data: allItems } = await db.from('items').select('*');
+          const moneyReward = Math.floor(player.level + Math.random() * (player.level * 0.5)) * 2;
+          const xpReward = Math.floor(player.level + Math.random() * (player.level * 0.5)) * 60;
+          let rank = wichRank(player.level);
+          const rankChance = Math.floor(Math.random() * 100);
+          function wichRank(level) {
+            const ranks = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+            const rankNum = Math.floor(level / 20);
+            return { name: ranks[rankNum], id: rankNum };
+          }
+          if (rankChance >= 65 && rankChance < 80) {
+            const rankNum = rank.id - 1 >= 0 ? rank.id - 1 : rank.id + 1;
+            rank = wichRank(rankNum * 20);
+          }
+          if (rankChance >= 80 && rankChance < 90) {
+            let rankNum = 0;
+            if (rank.id - 1 >= 0) {
+              if (rank.id + 1 <= 4) {
+                rankNum = rank.id + 1;
+              } else {
+                rankNum = rank.id - 2;
+              }
+            } else {
+              rankNum = rank.id + 2;
+            }
+            rank = wichRank(rankNum * 20);
+          }
+          if (rankChance >= 90 && rankChance < 97) {
+            let rankNum = 0;
+            if (rank.id - 1 >= 0) {
+              if (rank.id + 1 <= 4) {
+                if (rank.id - 2 >= 0) {
+                  rankNum = rank.id - 2;
+                } else {
+                  rankNum = rank.id + 2;
+                }
+              } else {
+                rankNum = rank.id - 3;
+              }
+            } else {
+              rankNum = rank.id + 3;
+            }
+            rank = wichRank(rankNum * 20);
+          }
+          if (rankChance >= 97) {
+            let rankNum = 0;
+            if (rank.id - 1 >= 0) {
+              if (rank.id + 1 <= 4) {
+                if (rank.id - 2 >= 0) {
+                  if (rank.id + 2 <= 4) {
+                    rankNum = rank.id + 2;
+                  } else {
+                    rankNum = rank.id - 3;
+                  }
+                } else {
+                  rankNum = rank.id + 3;
+                }
+              } else {
+                rankNum = rank.id - 4;
+              }
+            } else {
+              rankNum = rank.id + 4;
+            }
+            rank = wichRank(rankNum * 20);
+          }
+          const { data: allItems } = await db.from('items').select('*').eq('rank', rank.name);
           const itemReward = allItems[Math.floor(Math.random() * allItems.length)];
-          const moneyReward = Math.max(player.level, Math.round(Math.random() * player.level * 3)) * 10;
-          const xpReward = Math.max(player.level, Math.round(Math.random() * player.level * 3)) * 60;
 
           const { error: insertError } = await db.from('adventures').insert([
             {
@@ -368,6 +441,153 @@ Current Stats:
         }
         return new Response('OK', { status: 200 });
       }
+      //------------------------------------------/sell
+      if (textMatch[0].startsWith('/sell')) {
+        const itemId = parseInt(textMatch[1]);
+        if (!itemId) {
+          await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ Enter your item ID\nLike:\n/sell 123');
+          return new Response('Error', { status: 200 });
+        }
+        try {
+          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
+          if (!player) {
+            await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have a character.');
+            return new Response('Error', { status: 200 });
+          }
+          const { data: item } = await db
+            .from('player_items')
+            .select(`*, data:items(*)`)
+            .eq('id', itemId)
+            .eq('player_id', player.id)
+            .maybeSingle();
+          if (!item) {
+            await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have this item');
+            return new Response('Error', { status: 200 });
+          }
+          await db
+            .from('players')
+            .update({ money: player.money + item.data.price })
+            .eq('id', player.id);
+          await db.from('player_items').delete().eq('id', item.id);
+
+          await sendMessage(
+            TELEGRAM_TOKEN,
+            chatId,
+            `*${item.data.name}* sold\nPrice: *$${item.data.price}*`,
+            { parse_mode: 'MarkdownV2' },
+          );
+        } catch (err) {
+          console.error('DB Error:', err);
+          await sendMessage(TELEGRAM_TOKEN, chatId, '❌ An error occurred while selling item');
+        }
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/action_house
+      if (textMatch[0].startsWith('/action_house')) {
+        const actionType = textMatch[1];
+        const itemId = parseInt(textMatch[2]);
+        const price = parseInt(textMatch[3]);
+        try {
+          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
+          if (!player) {
+            await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have a character.');
+            return new Response('Error', { status: 200 });
+          }
+          const { data: actions } = await db
+            .from('action_house')
+            .select(`*, item:player_items(*, data:items(*))`);
+          if (!actionType) {
+            let message = '';
+            actions.forEach((action) => {
+              if (message)
+                message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+              message += `
+*${action.item.data.name}*     *ID:  ${action.item.id}*
+*Price:  $${action.price}*     *Type:*  ${action.item.data.type}
+🛡️: *${action.item.data.armor}*    \\|    💪: *${action.item.data.strength}*    \\|    🩸: *${action.item.data.stamina}*
+              `;
+            });
+            if (!actions?.length) message = '*No item for sale*';
+            await sendMessage(TELEGRAM_TOKEN, chatId, message, { parse_mode: 'MarkdownV2' });
+            return new Response('OK', { status: 200 });
+          }
+          if (actionType === 'sell') {
+            if (!itemId || !price) {
+              await sendMessage(
+                TELEGRAM_TOKEN,
+                chatId,
+                '⚠️ Enter your item ID and Price\nLike:\n/action_house sell 123 500',
+              );
+              return new Response('Error', { status: 200 });
+            }
+            const { data: item } = await db
+              .from('player_items')
+              .select(`*, data:items(*)`)
+              .eq('id', itemId)
+              .eq('player_id', player.id)
+              .maybeSingle();
+            if (!item) {
+              await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have this item.');
+              return new Response('Error', { status: 200 });
+            }
+            if (player.money < price * 0.05) {
+              await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have enough money to pay the fee.');
+              return new Response('Error', { status: 200 });
+            }
+            await db
+              .from('players')
+              .update({ money: player.money - price * 0.05 })
+              .eq('id', player.id);
+            await db.from('action_house').insert([{ id: item.id, price }]);
+            await sendMessage(TELEGRAM_TOKEN, chatId, '✅ Your item has been listed in the Action House\\!', {
+              parse_mode: 'MarkdownV2',
+            });
+          } else if (actionType === 'buy') {
+            if (!itemId) {
+              await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ Enter item ID\nLike:\n/action_house buy 123');
+              return new Response('Error', { status: 200 });
+            }
+            const action = actions.find((action) => action.id === itemId);
+            if (!action) {
+              await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ This item isn’t available for sale.');
+              return new Response('Error', { status: 200 });
+            }
+            if (player.money < action.price) {
+              await sendMessage(TELEGRAM_TOKEN, chatId, '⚠️ You dont have enough money to buy this item.');
+              return new Response('Error', { status: 200 });
+            }
+            const { data: seller } = await db
+              .from('players')
+              .select('*')
+              .eq('id', action.item.player_id)
+              .maybeSingle();
+            await db
+              .from('players')
+              .update({ money: player.money - action.price })
+              .eq('id', player.id);
+            await db
+              .from('players')
+              .update({ money: seller.money + action.price })
+              .eq('id', seller.id);
+            await db.from('action_house').delete().eq('id', action.id);
+            await db.from('player_items').update({ status: false, player_id: player.id }).eq('id', action.id);
+            await sendMessage(TELEGRAM_TOKEN, chatId, '🛒 You successfully bought the item\\!', {
+              parse_mode: 'MarkdownV2',
+            });
+          } else {
+            await sendMessage(
+              TELEGRAM_TOKEN,
+              chatId,
+              '⚠️ Action Type must be "buy" or "sell"\nLike:\n/action_house buy ...',
+            );
+            return new Response('Error', { status: 200 });
+          }
+        } catch (err) {
+          console.error('DB Error:', err);
+          await sendMessage(TELEGRAM_TOKEN, chatId, '❌ An error occurred while using action house');
+        }
+        return new Response('OK', { status: 200 });
+      }
     }
 
     return new Response('OK', { status: 200 });
@@ -391,5 +611,5 @@ async function sendMessage(TELEGRAM_TOKEN, chatId, text, options = {}) {
 function xpForNextLevel(level) {
   const baseXP = 100;
   const growth = 1.15;
-  return Math.round(baseXP * Math.pow(1 + level, growth) * Math.log(1 + level));
+  return Math.floor(baseXP * Math.pow(1 + level, growth) * Math.log(1 + level));
 }

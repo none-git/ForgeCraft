@@ -31,12 +31,22 @@ export default {
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     ctx.waitUntil(
       (async () => {
-        //------------------------------------------//
+        //------------------------------------------/sessions
+        const { data: sessions } = await db.from('sessions').select('*');
+        if (sessions?.length) {
+          for (const session of sessions) {
+            const created = new Date(session.created_at);
+            const now = new Date();
+            const diffMinutes = Math.floor((now - created) / 1000);
+            if (diffMinutes >= 60) await db.from('sessions').delete().eq('player_id', session.player_id);
+          }
+        }
+        //------------------------------------------/shop
         const currentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tehran' });
         const { data } = await db.from('settings').select('value').eq('key', 'lastDailyRun').maybeSingle();
         const lastRun = data?.value;
         if (lastRun !== currentDate) {
-          await db.from('shop').delete();
+          await db.from('shop').delete().not('id', 'is', null);
           const { data: items } = await db.from('items').select('*');
           const forbiddenRanks = ['legendary', 'common'];
           let i = 0;
@@ -49,19 +59,19 @@ export default {
           }
           await db.from('settings').upsert({ key: 'lastDailyRun', value: currentDate });
         }
-        //------------------------------------------//
-        const { data: actions } = await db.from('action_house').select('*');
+        //------------------------------------------/auction_house
+        const { data: actions } = await db.from('auction_house').select('*');
         if (!actions?.length) {
           for (const action of actions) {
             const created = new Date(action.created_at);
             const now = new Date();
             const diffMinutes = Math.floor((now - created) / (1000 * 60));
             if (diffMinutes >= 60 * 24 * 3) {
-              await db.from('action_house').delete().eq('id', action.id);
+              await db.from('auction_house').delete().eq('id', action.id);
             }
           }
         }
-        //------------------------------------------//
+        //------------------------------------------/adventure
         const { data: adventures } = await db
           .from('adventures')
           .select('*, item_reward:items(*), player:players(*)');
@@ -96,12 +106,12 @@ export default {
 *Your rewards:*
 💰 Money Reward:  *$${adventure.money_reward}*
 ✨ XP Gained:  *${adventure.xp_reward}XP*
-🎁 Item:  *${adventure.item_reward.name}*
+🎁 Item:  *${rankDisplay(adventure.item_reward)}*
               `,
                 { parse_mode: 'MarkdownV2' },
               );
             } catch (err) {
-              console.error('DB Error:', err);
+              console.error('Error:', err);
               await sendMessage(
                 TELEGRAM_TOKEN,
                 adventure.player.id,
@@ -113,35 +123,283 @@ export default {
       })(),
     );
   },
-  // ========================== Fetch ========================== //
+  // ============================ Fetch ============================ //
   async fetch(request, env, ctx) {
     if (request.method !== 'POST') return new Response('OK', { status: 200 });
     const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     const body = await request.json();
 
-    const getPlayerItems = async (playerId) => {
+    async function verifyPlayer(playerId, callback = false) {
+      const { data: player } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
+      if (!player) {
+        await sendMsg(`⚠️ You don't have a *character*\\.`);
+        if (callback) {
+          await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: body.callback_query.id }),
+          });
+        }
+        return null;
+      }
+      return player;
+    }
+    async function getPlayerItems(playerId) {
       const { data: data, error: error } = await db
         .from('player_items')
         .select(`*, data:items(*)`)
         .eq('player_id', playerId);
       if (error) throw error;
       return data;
-    };
-    // ---------------------- Commands ---------------------- //\\.'
+    }
+    async function showItemsPage(chatId, playerId, page = 1, messageId = null) {
+      const pageSize = 10;
+      const offset = (page - 1) * pageSize;
+      const { data: items } = await db
+        .from('player_items')
+        .select(`*, data:items(*)`)
+        .eq('player_id', playerId)
+        .range(offset, offset + pageSize - 1);
+
+      let message = '';
+      let i = 0;
+      for (const item of items) {
+        if (message)
+          message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+        message += `${rankDisplay(item.data)}     *ID:  ${item.id}*
+*Price:  $${item.data.price}*     *Type:*  ${item.data.type}
+🛡️: *${item.data.armor}*    \\|    💪: *${item.data.strength}*    \\|    🩸: *${item.data.stamina}*`;
+        i++;
+      }
+      if (!items?.length) message = '*No item*';
+
+      const hasNext = items.length === pageSize && page != 3;
+      const hasPrev = page > 1;
+      const buttons = [];
+      if (hasPrev) buttons.push({ text: '⬅️ Prev', callback_data: `items_page_${page - 1}_${playerId}` });
+      if (hasNext) buttons.push({ text: 'Next ➡️', callback_data: `items_page_${page + 1}_${playerId}` });
+
+      if (messageId) {
+        await editMessage(TELEGRAM_TOKEN, chatId, messageId, message, {
+          parse_mode: 'MarkdownV2',
+          reply_markup: { inline_keyboard: [buttons] },
+        });
+      } else {
+        await sendMessage(TELEGRAM_TOKEN, chatId, message, {
+          parse_mode: 'MarkdownV2',
+          reply_markup: { inline_keyboard: [buttons] },
+        });
+      }
+    }
+    // ---------------------- Callbacks ---------------------- //
+    if (body.callback_query) {
+      const fromId = body.callback_query.from.id;
+      const chatId = body.callback_query.message.chat.id;
+      const messageId = body.callback_query.message.message_id;
+      const data = body.callback_query.data;
+      //------------------------------------------/items
+      if (data.startsWith('items_page')) {
+        const page = parseInt(data.split('_')[2]);
+        const playerId = parseInt(data.split('_')[3]);
+        await showItemsPage(chatId, playerId, page, messageId);
+      }
+      //------------------------------------------/sell_by_rank
+      if (data.startsWith('sellBy_rank')) {
+        const player = await verifyPlayer(fromId, true);
+        if (!player) return new Response('Error', { status: 200 });
+        const rank = data.split('_')[2];
+        let items = await getPlayerItems(fromId);
+        items = items.filter((item) => item.data.rank === rank);
+        if (items?.length > 0) {
+          let price = 0;
+          for (const item of items) {
+            if (item.id !== 1) {
+              price += item.data.price;
+              await db.from('player_items').delete().eq('id', item.id);
+            }
+          }
+          await db
+            .from('players')
+            .update({ money: player.money + price })
+            .eq('id', fromId);
+          await editMessage(
+            TELEGRAM_TOKEN,
+            chatId,
+            messageId,
+            `✅ ALL items with rank of  *${rank}*  sold for  *$${price}*`,
+            { parse_mode: 'MarkdownV2' },
+          );
+        }
+      }
+      //------------------------------------------/shop
+      if (data.startsWith('shop_buy')) {
+        const player = await verifyPlayer(fromId, true);
+        if (!player) return new Response('Error', { status: 200 });
+        await db.from('sessions').upsert({
+          player_id: fromId,
+          command: 'shop',
+          state: 1,
+          data: { player },
+        });
+        await editMessage(TELEGRAM_TOKEN, chatId, messageId, 'Enter *item ID*', {
+          parse_mode: 'MarkdownV2',
+        });
+      }
+      //------------------------------------------/fight
+      if (data.startsWith('fight')) {
+        const isAccepted = data.split('_')[1];
+        const targetId = parseInt(data.split('_')[2]);
+        if (fromId == targetId) {
+          const { data: session } = await db
+            .from('sessions')
+            .select('*')
+            .eq('player_id', targetId)
+            .maybeSingle();
+          if (!session || isAccepted === 'no') deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
+          if (session && isAccepted === 'yes') {
+            await db.from('sessions').delete().eq('player_id', targetId);
+            const bet = session.data.bet;
+            const player = session.data.player;
+            const target = session.data.target;
+            if (target.money < bet) {
+              await editMessage(
+                TELEGRAM_TOKEN,
+                chatId,
+                messageId,
+                `⚠️ You don't have enough money to pay the bet.`,
+              );
+              await db.from('sessions').delete().eq('player_id', targetId);
+              return new Response('Error', { status: 200 });
+            }
+            const playeritems = await getPlayerItems(player.id);
+            const pp = getUserProfile(playeritems, player.level);
+            pp.hp = pp.stamina * 10;
+            pp.dps = pp.strength;
+            pp.dpsTake = (4000 - pp.armor) / 4000;
+            const targetitems = await getPlayerItems(target.id);
+            const tp = getUserProfile(targetitems, target.level);
+            tp.hp = tp.stamina * 10;
+            tp.dps = tp.strength;
+            tp.dpsTake = (4000 - tp.armor) / 4000;
+
+            await editMessage(
+              TELEGRAM_TOKEN,
+              chatId,
+              messageId,
+              `
+@${escapeMarkdownV2(player.username)}
+🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
+
+                                _*VS*_
+@${escapeMarkdownV2(target.username)}
+🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
+              `,
+              { parse_mode: 'MarkdownV2' },
+            );
+            ctx.waitUntil(
+              (async () => {
+                await delay(2500);
+                await editMessage(
+                  TELEGRAM_TOKEN,
+                  chatId,
+                  messageId,
+                  `
+@${escapeMarkdownV2(player.username)}
+🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
+
+                      _*${escapeMarkdownV2('— FIGHT! —')}*_
+@${escapeMarkdownV2(target.username)}
+🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
+                  `,
+                  { parse_mode: 'MarkdownV2' },
+                );
+
+                let i = 0;
+                while (i < 15 && pp.hp > 0 && tp.hp > 0) {
+                  const attacker = Math.random() < 0.5;
+                  let attackSide = '';
+                  if (attacker) {
+                    tp.hp -= pp.dps * tp.dpsTake;
+                    if (tp.hp < 0) tp.hp = 0;
+                    attackSide = '➡️🗡️';
+                  } else {
+                    pp.hp -= tp.dps * pp.dpsTake;
+                    if (pp.hp < 0) pp.hp = 0;
+                    attackSide = '🗡️⬅️';
+                  }
+                  await delay(1050);
+                  await editMessage(
+                    TELEGRAM_TOKEN,
+                    chatId,
+                    messageId,
+                    `
+*Round ${i + 1}*
+@${escapeMarkdownV2(player.username)}     ${attackSide}     @${escapeMarkdownV2(target.username)}
+
+HP: *${parseInt(pp.hp)}*                             HP: *${parseInt(tp.hp)}*
+DPS: *${pp.dps}*                             DPS: *${tp.dps}*
+                    `,
+                    { parse_mode: 'MarkdownV2' },
+                  );
+                  i++;
+                }
+
+                const winner = pp.hp > tp.hp ? player : target;
+                const loser = pp.hp < tp.hp ? player : target;
+                await db
+                  .from('players')
+                  .update({ money: winner.money + bet })
+                  .eq('id', winner.id);
+                await db
+                  .from('players')
+                  .update({ money: loser.money - bet })
+                  .eq('id', loser.id);
+                await delay(1050);
+                await editMessage(
+                  TELEGRAM_TOKEN,
+                  chatId,
+                  messageId,
+                  `
+_*${escapeMarkdownV2('— FIGHT ENDED! —')}*_
+
+*WINNER:* @${escapeMarkdownV2(winner.username)}
+                  `,
+                  { parse_mode: 'MarkdownV2' },
+                );
+              })(),
+            );
+          }
+        }
+      }
+      //------------------------------------------
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: body.callback_query.id }),
+      });
+      return new Response('OK', { status: 200 });
+    }
+    // ---------------------- Commands ---------------------- //
     if (body.message && body.message.text) {
       const fromId = body.message.from.id;
       const chatId = body.message.chat.id;
       const text = body.message.text;
       const textMatch = text.trim().split(/\s+/);
-      async function sendMsg(messageText) {
-        return await sendMessage(TELEGRAM_TOKEN, chatId, messageText, { parse_mode: 'MarkdownV2' });
+      async function sendMsg(messageText, { reply = false, buttons = null } = {}) {
+        const options = { parse_mode: 'MarkdownV2' };
+        if (reply && body?.message?.message_id) {
+          options.reply_to_message_id = body.message.message_id;
+          options.allow_sending_without_reply = true;
+        }
+        if (buttons) options.reply_markup = { inline_keyboard: [buttons] };
+        return await sendMessage(TELEGRAM_TOKEN, chatId, messageText, options);
       }
       async function editMsg(messageId, messageText) {
         await editMessage(TELEGRAM_TOKEN, chatId, messageId, messageText, { parse_mode: 'MarkdownV2' });
       }
       //------------------------------------------/fact
-      if (textMatch[0].startsWith('/fact')) {
+      if (text.startsWith('/fact')) {
         if (!textMatch[1]) {
           await sendMsg('⚠️ لطفاً بعد از دستور، شناسه‌ی گیرنده را وارد کنید.\nمثال:\n/fact @user');
           return new Response('Error', { status: 200 });
@@ -174,12 +432,12 @@ export default {
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/create
-      if (textMatch[0].startsWith('/create')) {
+      if (text.startsWith('/create')) {
         const username = body.message.from.username;
         try {
           const { data: player } = await db.from('players').select('id').eq('id', fromId).maybeSingle();
           if (player) {
-            await sendMsg('⚠️ You already have a character\\.');
+            await sendMsg('⚠️ You already have a *character*\\.');
             return new Response('Error', { status: 200 });
           }
 
@@ -188,13 +446,13 @@ export default {
 
           await sendMsg(`✅ Character "${username}" created.`);
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while creating your character\\.');
         }
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/profile
-      if (textMatch[0].startsWith('/profile')) {
+      if (text.startsWith('/profile')) {
         const username = textMatch[1] ? textMatch[1].slice(1) : body.message.from.username;
         try {
           const { data: player } = await db
@@ -205,8 +463,8 @@ export default {
           if (!player) {
             await sendMsg(
               textMatch[1]
-                ? `⚠️ Your target doesn't have a character\\.`
-                : `⚠️ You don't have a character\\.`,
+                ? `⚠️ Your target doesn't have a *character*\\.`
+                : `⚠️ You don't have a *character*\\.`,
             );
             return new Response('Error', { status: 200 });
           }
@@ -230,13 +488,13 @@ legs:  ${rankDisplay(profile.equipped.legs?.data ?? null)}
 arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
             `);
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while geting charecter profile data\\.');
         }
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/items
-      if (textMatch[0].startsWith('/items')) {
+      if (text.startsWith('/items')) {
         const username = textMatch[1] ? textMatch[1].slice(1) : body.message.from.username;
         try {
           const { data: player } = await db
@@ -247,70 +505,35 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           if (!player) {
             await sendMsg(
               textMatch[1]
-                ? `⚠️ Your target doesn't have a character\\.`
-                : `⚠️ You don't have a character\\.`,
+                ? `⚠️ Your target doesn't have a *character*\\.`
+                : `⚠️ You don't have a *character*\\.`,
             );
             return new Response('Error', { status: 200 });
           }
-          const items = await getPlayerItems(player.id);
-
-          let message = '';
-          items.forEach((item) => {
-            if (message)
-              message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
-            message += `
-${rankDisplay(item.data)}     *ID:  ${item.id}*
-*Price:  $${item.data.price}*     *Type:*  ${item.data.type}
-🛡️: *${item.data.armor}*    \\|    💪: *${item.data.strength}*    \\|    🩸: *${item.data.stamina}*
-            `;
-          });
-          if (!items?.length) message = '*No item*';
-          await sendMsg(message);
+          await showItemsPage(chatId, player.id);
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while geting charecter items data\\.');
         }
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/equip
-      if (textMatch[0].startsWith('/equip')) {
-        const itemId = parseInt(textMatch[1]);
-        if (!itemId) {
-          await sendMsg('⚠️ Enter your item ID\nLike:\n/equip 123');
-          return new Response('Error', { status: 200 });
-        }
-        try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          const items = await getPlayerItems(player.id);
-
-          const item = items.find((item) => item.id === parseInt(itemId));
-          if (!item) {
-            await sendMsg(`⚠️ You don't have this item\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          const oldItem = items.find((x) => x.status && x.data.type === item.data.type);
-          if (oldItem) await db.from('player_items').update({ status: false }).eq('id', oldItem.id);
-          await db.from('player_items').update({ status: true }).eq('id', item.id);
-
-          await sendMsg(`${rankDisplay(item.data)} equipped`);
-        } catch (err) {
-          console.error('DB Error:', err);
-          await sendMsg('❌ An error occurred while equipping item\\.');
-        }
+      if (text.startsWith('/equip')) {
+        const player = await verifyPlayer(fromId);
+        if (!player) return new Response('Error', { status: 200 });
+        await db.from('sessions').upsert({
+          player_id: fromId,
+          command: 'equip',
+          state: 1,
+        });
+        await sendMsg('Enter your *item ID*');
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/adventure
-      if (textMatch[0].startsWith('/adventure')) {
+      if (text.startsWith('/adventure')) {
         try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
+          const player = await verifyPlayer(fromId);
+          if (!player) return new Response('Error', { status: 200 });
           const { data: adventure } = await db
             .from('adventures')
             .select('id')
@@ -321,6 +544,10 @@ ${rankDisplay(item.data)}     *ID:  ${item.id}*
             return new Response('Error', { status: 200 });
           }
           const items = await getPlayerItems(player.id);
+          if (items.length >= 30) {
+            await sendMsg(`⚠️ Your inventory is full\\.`);
+            return new Response('Error', { status: 200 });
+          }
           const profile = getUserProfile(items, player.level);
           const moneyReward = Math.floor(player.level + Math.random() * (player.level * 0.5)) * 2;
           const xpReward = Math.floor(player.level + Math.random() * (player.level * 0.5)) * 60;
@@ -420,168 +647,84 @@ Current Stats:
 🛡️: *${profile.armor}*    \\|    💪: *${profile.strength}*    \\|    🩸: *${profile.stamina}*
             `);
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while starting an adventure\\.');
         }
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/gift
-      if (textMatch[0].startsWith('/gift')) {
-        let targetUsername = textMatch[1];
-        const itemId = parseInt(textMatch[2]);
-        if (!targetUsername) {
-          await sendMsg('⚠️ Enter your target\nLike:\n/gift @user 123');
-          return new Response('Error', { status: 200 });
-        } else {
-          targetUsername = textMatch[1].slice(1);
-        }
-        if (!itemId) {
-          await sendMsg('⚠️ Enter your item ID\nLike:\n/gift @user 123');
-          return new Response('Error', { status: 200 });
-        }
-        try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          const { data: target } = await db
-            .from('players')
-            .select('*')
-            .eq('username', targetUsername)
-            .maybeSingle();
-          if (!target) {
-            await sendMsg(`⚠️ Your target doesn't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          const { data: item } = await db
-            .from('player_items')
-            .select(`*, data:items(*)`)
-            .eq('id', itemId)
-            .eq('player_id', player.id)
-            .maybeSingle();
-          if (!item) {
-            await sendMsg(`⚠️ You don't have this item\\.`);
-            return new Response('Error', { status: 200 });
-          }
-
-          await db.from('player_items').update({ status: false, player_id: target.id }).eq('id', item.id);
-
-          await sendMsg(`${rankDisplay(item.data)} gifted to @${escapeMarkdownV2(target.username)}`);
-        } catch (err) {
-          console.error('DB Error:', err);
-          await sendMsg('❌ An error occurred while gifting item\\.');
-        }
+      if (text.startsWith('/gift')) {
+        const player = await verifyPlayer(fromId);
+        if (!player) return new Response('Error', { status: 200 });
+        await db.from('sessions').upsert({
+          player_id: fromId,
+          command: 'gift',
+          state: 1,
+        });
+        await sendMsg('Enter your *Target*');
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/sell
-      if (textMatch[0].startsWith('/sell')) {
-        const itemId = parseInt(textMatch[1]);
-        if (!itemId) {
-          await sendMsg('⚠️ Enter your item ID\nLike:\n/sell 123');
-          return new Response('Error', { status: 200 });
-        }
-        try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          const { data: item } = await db
-            .from('player_items')
-            .select(`*, data:items(*)`)
-            .eq('id', itemId)
-            .eq('player_id', player.id)
-            .maybeSingle();
-          if (!item) {
-            await sendMsg(`⚠️ You don't have this item\\.`);
-            return new Response('Error', { status: 200 });
-          }
-          await db
-            .from('players')
-            .update({ money: player.money + item.data.price })
-            .eq('id', player.id);
-          await db.from('player_items').delete().eq('id', item.id);
-
-          await sendMsg(`${rankDisplay(item.data)} sold\nPrice: *$${item.data.price}*`);
-        } catch (err) {
-          console.error('DB Error:', err);
-          await sendMsg('❌ An error occurred while selling item\\.');
-        }
+      if (text.startsWith('/sell') && !text.startsWith('/sell_by')) {
+        const player = await verifyPlayer(fromId);
+        if (!player) return new Response('Error', { status: 200 });
+        await db.from('sessions').upsert({
+          player_id: fromId,
+          command: 'sell',
+          state: 1,
+          data: { player },
+        });
+        await sendMsg('Enter your *item ID*');
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/sell_by_rank
+      if (text.startsWith('/sell_by_rank')) {
+        const player = await verifyPlayer(fromId);
+        if (!player) return new Response('Error', { status: 200 });
+        await sendMsg('Choose one *Rank* to delete items', {
+          buttons: [
+            { text: 'Common', callback_data: `sellBy_rank_common` },
+            { text: 'Uncommon', callback_data: `sellBy_rank_uncommon` },
+            { text: 'Rare', callback_data: `sellBy_rank_rare` },
+            { text: 'Epic', callback_data: `sellBy_rank_epic` },
+          ],
+        });
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/shop
-      if (textMatch[0].startsWith('/shop')) {
-        const actionType = textMatch[1];
-        const itemId = parseInt(textMatch[2]);
+      if (text.startsWith('/shop')) {
         try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
+          const player = await verifyPlayer(fromId);
+          if (!player) return new Response('Error', { status: 200 });
           const { data: shop } = await db.from('shop').select(`*, item:items(*)`);
-          if (!actionType) {
-            let message = '';
-            shop.forEach((shopItem) => {
-              if (message)
-                message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
-              message += `
-${rankDisplay(shopItem.item)}     *ID:  ${shopItem.id}*
+          let message = '';
+          shop.forEach((shopItem) => {
+            if (message)
+              message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+            message += `${rankDisplay(shopItem.item)}     *ID:  ${shopItem.id}*
 *Price:  $${shopItem.item.price * 2}*     *Type:*  ${shopItem.item.type}
 🛡️: *${shopItem.item.armor}*    \\|    💪: *${shopItem.item.strength}*    \\|    🩸: *${
-                shopItem.item.stamina
-              }*
-              `;
-            });
-            if (!shop?.length) message = '*All items have been sold\\.*';
-            await sendMsg(message);
-          } else if (actionType === 'buy') {
-            if (!itemId) {
-              await sendMsg('⚠️ Enter your item ID\nLike:\n/buy 123');
-              return new Response('Error', { status: 200 });
-            }
-            const shopItem = shop.find((item) => item.id === itemId);
-            if (!shopItem) {
-              await sendMsg(`⚠️ This item isn't available for sale\\.`);
-              return new Response('Error', { status: 200 });
-            }
-            const { data: item } = await db
-              .from('items')
-              .select(`*`)
-              .eq('id', shopItem.item_id)
-              .maybeSingle();
-            if (player.money < item.price * 2) {
-              await sendMsg(`⚠️ You don't have enough money to buy this item\\.`);
-              return new Response('Error', { status: 200 });
-            }
-            await db
-              .from('players')
-              .update({ money: player.money - item.price * 2 })
-              .eq('id', player.id);
-            await db.from('shop').delete().eq('id', shopItem.id);
-            await db.from('player_items').insert([{ player_id: player.id, item_id: item.id }]);
-            await sendMsg(`🛒 You successfully bought the item\\!`);
-          }
+              shopItem.item.stamina
+            }*`;
+          });
+          if (!shop?.length) message = '*All items have been sold\\.*';
+          await sendMsg(message, { buttons: [{ text: 'Buy', callback_data: `shop_buy` }] });
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while using shop\\.');
         }
         return new Response('OK', { status: 200 });
       }
-      //------------------------------------------/action_house
-      if (textMatch[0].startsWith('/action_house')) {
+      //------------------------------------------/auction_house
+      if (text.startsWith('/auction_house')) {
         const actionType = textMatch[1];
         const itemId = parseInt(textMatch[2]);
         const price = parseInt(textMatch[3]);
         try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
-            return new Response('Error', { status: 200 });
-          }
+          const player = await verifyPlayer(fromId);
+          if (!player) return new Response('Error', { status: 200 });
           const { data: actions } = await db
-            .from('action_house')
+            .from('auction_house')
             .select(`*, item:player_items(*, data:items(*))`);
           if (!actionType) {
             let message = '';
@@ -600,7 +743,7 @@ ${rankDisplay(action.item.data)}     *ID:  ${action.item.id}*
             await sendMsg(message);
           } else if (actionType === 'sell') {
             if (!itemId || !price) {
-              await sendMsg('⚠️ Enter your item ID and Price\nLike:\n/action_house sell 123 500');
+              await sendMsg('⚠️ Enter your item ID and Price\nLike:\n/auction_house sell 123 500');
               return new Response('Error', { status: 200 });
             }
             const { data: item } = await db
@@ -621,16 +764,21 @@ ${rankDisplay(action.item.data)}     *ID:  ${action.item.id}*
               .from('players')
               .update({ money: player.money - price * 0.05 })
               .eq('id', player.id);
-            await db.from('action_house').insert([{ id: item.id, price }]);
+            await db.from('auction_house').insert([{ id: item.id, price }]);
             await sendMsg('✅ Your item has been listed in the Action House\\!');
           } else if (actionType === 'buy') {
             if (!itemId) {
-              await sendMsg('⚠️ Enter item ID\nLike:\n/action_house buy 123');
+              await sendMsg('⚠️ Enter item ID\nLike:\n/auction_house buy 123');
               return new Response('Error', { status: 200 });
             }
             const action = actions.find((action) => action.id === itemId);
             if (!action) {
               await sendMsg(`⚠️ This item isn't available for sale\\.`);
+              return new Response('Error', { status: 200 });
+            }
+            const items = await getPlayerItems(player.id);
+            if (items.length >= 30) {
+              await sendMsg(`⚠️ Your inventory is full\\.`);
               return new Response('Error', { status: 200 });
             }
             if (player.money < action.price) {
@@ -650,34 +798,73 @@ ${rankDisplay(action.item.data)}     *ID:  ${action.item.id}*
               .from('players')
               .update({ money: seller.money + action.price })
               .eq('id', seller.id);
-            await db.from('action_house').delete().eq('id', action.id);
+            await db.from('auction_house').delete().eq('id', action.id);
             await db.from('player_items').update({ status: false, player_id: player.id }).eq('id', action.id);
             await sendMsg('🛒 You successfully bought the item\\!');
           } else {
-            await sendMsg('⚠️ Action Type must be "buy" or "sell"\nLike:\n/action_house buy \\.\\.\\.');
+            await sendMsg('⚠️ Action Type must be "buy" or "sell"\nLike:\n/auction_house buy \\.\\.\\.');
             return new Response('Error', { status: 200 });
           }
         } catch (err) {
-          console.error('DB Error:', err);
+          console.error('Error:', err);
           await sendMsg('❌ An error occurred while using action house\\.');
         }
         return new Response('OK', { status: 200 });
       }
       //------------------------------------------/fight
-      if (textMatch[0].startsWith('/fight')) {
-        let targetUsername = textMatch[1];
-        if (!targetUsername) {
-          await sendMsg('⚠️ Enter your target\nLike:\n/fight @user');
+      if (text.startsWith('/fight')) {
+        const player = await verifyPlayer(fromId);
+        if (!player) return new Response('Error', { status: 200 });
+        await db.from('sessions').upsert({
+          player_id: fromId,
+          command: 'fight',
+          state: 1,
+          data: { player },
+        });
+        await sendMsg('Enter *Bet amount*');
+        return new Response('OK', { status: 200 });
+      }
+      // ---------------------- Sessions ---------------------- //
+      const { data: session } = await db.from('sessions').select('*').eq('player_id', fromId).maybeSingle();
+      if (!session) return new Response('OK', { status: 200 });
+      //------------------------------------------/equip
+      if (session.command === 'equip') {
+        const itemId = parseInt(text);
+        if (!itemId) {
+          await sendMsg('⚠️ Invalid *ID*');
           return new Response('Error', { status: 200 });
-        } else {
-          targetUsername = textMatch[1].slice(1);
         }
         try {
-          const { data: player } = await db.from('players').select('*').eq('id', fromId).maybeSingle();
-          if (!player) {
-            await sendMsg(`⚠️ You don't have a character\\.`);
+          const items = await getPlayerItems(fromId);
+
+          const item = items.find((item) => item.id === itemId);
+          if (!item) {
+            await sendMsg(`⚠️ You don't have this item\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
             return new Response('Error', { status: 200 });
           }
+          const oldItem = items.find((x) => x.status && x.data.type === item.data.type);
+          if (oldItem) await db.from('player_items').update({ status: false }).eq('id', oldItem.id);
+          await db.from('player_items').update({ status: true }).eq('id', item.id);
+
+          await sendMsg(`${rankDisplay(item.data)} equipped`);
+        } catch (err) {
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while equipping item\\.');
+        }
+        await db.from('sessions').delete().eq('player_id', fromId);
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/gift
+      if (session.command === 'gift' && session.state === 1) {
+        let targetUsername = textMatch[0];
+        if (!targetUsername) {
+          await sendMsg('⚠️ Invalid *User*');
+          return new Response('Error', { status: 200 });
+        } else {
+          targetUsername = targetUsername.slice(1);
+        }
+        try {
           const { data: target } = await db
             .from('players')
             .select('*')
@@ -685,92 +872,202 @@ ${rankDisplay(action.item.data)}     *ID:  ${action.item.id}*
             .maybeSingle();
           if (!target) {
             await sendMsg(`⚠️ Your target doesn't have a character\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
             return new Response('Error', { status: 200 });
           }
-          const playeritems = await getPlayerItems(player.id);
-          const pp = getUserProfile(playeritems, player.level);
-          pp.hp = pp.stamina * 10;
-          pp.dps = pp.strength;
-          pp.dpsTake = (4000 - pp.armor) / 4000;
-          const targetitems = await getPlayerItems(target.id);
-          const tp = getUserProfile(targetitems, target.level);
-          tp.hp = tp.stamina * 10;
-          tp.dps = tp.strength;
-          tp.dpsTake = (4000 - tp.armor) / 4000;
-
-          const sent = await sendMsg(`
-@${escapeMarkdownV2(player.username)}
-🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
-
-                              _*VS*_
-@${escapeMarkdownV2(target.username)}
-🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
-            `);
-          ctx.waitUntil(
-            (async () => {
-              await delay(2500);
-              await editMsg(
-                sent.message_id,
-                `
-@${escapeMarkdownV2(player.username)}
-🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
-
-                    _*${escapeMarkdownV2('— FIGHT! —')}*_
-@${escapeMarkdownV2(target.username)}
-🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
-                `,
-              );
-
-              let i = 0;
-              while (i < 10 && pp.hp > 0 && tp.hp > 0) {
-                const attacker = Math.random() < 0.5;
-                let attackSide = '';
-                if (attacker) {
-                  tp.hp -= pp.dps * tp.dpsTake;
-                  if (tp.hp < 0) tp.hp = 0;
-                  attackSide = '🗡️➡️';
-                } else {
-                  pp.hp -= tp.dps * pp.dpsTake;
-                  if (pp.hp < 0) pp.hp = 0;
-                  attackSide = '⬅️🗡️';
-                }
-                await delay(1050);
-                await editMsg(
-                  sent.message_id,
-                  `
-*Round ${i + 1}*
-@${escapeMarkdownV2(player.username)}     ${attackSide}     @${escapeMarkdownV2(target.username)}
-
-HP: *${parseInt(pp.hp)}*                             HP: *${parseInt(tp.hp)}*
-DPS: *${pp.dps}*                             DPS: *${tp.dps}*
-                  `,
-                );
-                i++;
-              }
-
-              await delay(1050);
-              await editMsg(
-                sent.message_id,
-                `
-_*${escapeMarkdownV2('— FIGHT ENDED! —')}*_
-
-*WINNER:* @${escapeMarkdownV2(pp.hp > tp.hp ? player.username : target.username)}
-                `,
-              );
-            })(),
-          );
+          const items = await getPlayerItems(target.id);
+          if (items.length >= 30) {
+            await sendMsg(`⚠️ Your target inventory is full\\.`);
+            return new Response('Error', { status: 200 });
+          }
+          await db.from('sessions').update({ state: 2, data: { target } }).eq('player_id', fromId);
+          await sendMsg('Enter your *item ID*');
         } catch (err) {
-          console.error('DB Error:', err);
-          await sendMsg('❌ An error occurred while fighting\\.');
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while gifting item\\.');
         }
         return new Response('OK', { status: 200 });
       }
-    }
+      if (session.command === 'gift' && session.state === 2) {
+        const itemId = parseInt(text);
+        if (!itemId) {
+          await sendMsg('⚠️ Invalid *ID*');
+          return new Response('Error', { status: 200 });
+        }
+        try {
+          const { data: item } = await db
+            .from('player_items')
+            .select(`*, data:items(*)`)
+            .eq('id', itemId)
+            .eq('player_id', fromId)
+            .maybeSingle();
+          if (!item) {
+            await sendMsg(`⚠️ You don't have this item\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
+            return new Response('Error', { status: 200 });
+          }
+          await db
+            .from('player_items')
+            .update({ status: false, player_id: session.data.target.id })
+            .eq('id', item.id);
+          await sendMsg(
+            `${rankDisplay(item.data)} gifted to @${escapeMarkdownV2(session.data.target.username)}`,
+          );
+        } catch (err) {
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while gifting item\\.');
+        }
+        await db.from('sessions').delete().eq('player_id', fromId);
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/sell
+      if (session.command === 'sell') {
+        const itemId = parseInt(text);
+        if (!itemId) {
+          await sendMsg('⚠️ Invalid *ID*');
+          return new Response('Error', { status: 200 });
+        }
+        try {
+          const { data: item } = await db
+            .from('player_items')
+            .select(`*, data:items(*)`)
+            .eq('id', itemId)
+            .eq('player_id', fromId)
+            .maybeSingle();
+          if (!item) {
+            await sendMsg(`⚠️ You don't have this item\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
+            return new Response('Error', { status: 200 });
+          }
+          await db
+            .from('players')
+            .update({ money: session.data.player.money + item.data.price })
+            .eq('id', fromId);
+          await db.from('player_items').delete().eq('id', item.id);
 
+          await sendMsg(`${rankDisplay(item.data)} sold\nPrice: *$${item.data.price}*`);
+        } catch (err) {
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while selling item\\.');
+        }
+        await db.from('sessions').delete().eq('player_id', fromId);
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/shop
+      if (session.command === 'shop') {
+        const itemId = parseInt(text);
+        if (!itemId) {
+          await sendMsg('⚠️ Invalid *ID*');
+          return new Response('Error', { status: 200 });
+        }
+        try {
+          const { data: shopItem } = await db
+            .from('shop')
+            .select(`*, item:items(*)`)
+            .eq('id', itemId)
+            .maybeSingle();
+          if (!shopItem) {
+            await sendMsg(`⚠️ This item isn't available for sale\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
+            return new Response('Error', { status: 200 });
+          }
+          const items = await getPlayerItems(fromId);
+          if (items.length >= 30) {
+            await sendMsg(`⚠️ Your inventory is full\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
+            return new Response('Error', { status: 200 });
+          }
+          const { data: item } = await db.from('items').select(`*`).eq('id', shopItem.item_id).maybeSingle();
+          if (session.data.player.money < item.price * 2) {
+            await sendMsg(`⚠️ You don't have enough money to buy this item\\.`);
+            return new Response('Error', { status: 200 });
+          }
+          await db
+            .from('players')
+            .update({ money: session.data.player.money - item.price * 2 })
+            .eq('id', fromId);
+          await db.from('shop').delete().eq('id', shopItem.id);
+          await db.from('player_items').insert([{ player_id: fromId, item_id: item.id }]);
+          await sendMsg(`🛒 You successfully bought the item\\!`);
+        } catch (err) {
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while buying item\\.');
+        }
+        await db.from('sessions').delete().eq('player_id', fromId);
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------/fight
+      if (session.command === 'fight' && session.state === 1) {
+        const bet = parseInt(text);
+        if (!bet || bet < 0) {
+          await sendMsg('⚠️ Invalid *Amount*');
+          return new Response('Error', { status: 200 });
+        }
+        if (session.data.player.money < bet) {
+          await sendMsg(`⚠️ You don't have enough money to pay the bet\\.`);
+          await db.from('sessions').delete().eq('player_id', fromId);
+          return new Response('Error', { status: 200 });
+        }
+        await db
+          .from('sessions')
+          .update({ state: 2, data: { player: session.data.player, bet } })
+          .eq('player_id', fromId);
+        await sendMsg('Enter your *Target*');
+        return new Response('OK', { status: 200 });
+      }
+      if (session.command === 'fight' && session.state === 2) {
+        let targetUsername = textMatch[0];
+        if (!targetUsername) {
+          await sendMsg('⚠️ Invalid *User*');
+          return new Response('Error', { status: 200 });
+        } else {
+          targetUsername = targetUsername.slice(1);
+        }
+        try {
+          const { data: target } = await db
+            .from('players')
+            .select('*')
+            .eq('username', targetUsername)
+            .maybeSingle();
+          if (!target) {
+            await sendMsg(`⚠️ Your target doesn't have a character\\.`);
+            await db.from('sessions').delete().eq('player_id', fromId);
+            return new Response('Error', { status: 200 });
+          }
+          await db.from('sessions').delete().eq('player_id', fromId);
+          await db.from('sessions').upsert({
+            player_id: target.id,
+            command: 'fight',
+            state: 3,
+            data: { player: session.data.player, bet: session.data.bet, target },
+          });
+          await sendMsg(
+            `
+*FIGHT REQUEST\\!*
+
+from:  @${escapeMarkdownV2(session.data.player.username)}
+to:  @${escapeMarkdownV2(target.username)}
+bet amount:  *$${session.data.bet}*
+              `,
+            {
+              buttons: [
+                { text: '✅', callback_data: `fight_yes_${target.id}` },
+                { text: '❌', callback_data: `fight_no_${target.id}` },
+              ],
+            },
+          );
+        } catch (err) {
+          console.error('Error:', err);
+          await sendMsg('❌ An error occurred while fighting item\\.');
+        }
+        return new Response('OK', { status: 200 });
+      }
+      //------------------------------------------
+    }
     return new Response('OK', { status: 200 });
   },
 };
-// ====================== Helper ======================
+// ====================== Helper ====================== //
 async function sendMessage(TELEGRAM_TOKEN, chatId, text, options = {}) {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   const body = {
@@ -813,10 +1110,30 @@ async function editMessage(TELEGRAM_TOKEN, chatId, messageId, text, options = {}
 
   return data.result;
 }
+async function deleteMessage(TELEGRAM_TOKEN, chatId, messageId) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteMessage`;
+  const body = {
+    chat_id: chatId,
+    message_id: messageId,
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    console.error('Telegram delete error:', data);
+  }
+
+  return data.ok;
+}
 function escapeMarkdownV2(text) {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
-const getUserProfile = (items, playerLevel) => {
+function getUserProfile(items, playerLevel) {
   const equipped = {
     weapon: items.find((x) => x.data.type === 'weapon' && x.status),
     shield: items.find((x) => x.data.type === 'shield' && x.status),
@@ -837,7 +1154,7 @@ const getUserProfile = (items, playerLevel) => {
     strength: calcTotal('strength'),
     stamina: calcTotal('stamina'),
   };
-};
+}
 function xpForNextLevel(level) {
   const baseXP = 100;
   const growth = 1.15;

@@ -50,7 +50,7 @@ export default {
           const { data: items } = await db.from('items').select('*');
           const forbiddenRanks = ['legendary', 'common'];
           let i = 0;
-          while (i < 4) {
+          while (i < 6) {
             const item = items[Math.floor(Math.random() * items.length)];
             if (!forbiddenRanks.includes(item.rank)) {
               await db.from('shop').insert([{ item_id: item.id }]);
@@ -66,7 +66,7 @@ export default {
             const created = new Date(action.created_at);
             const now = new Date();
             const diffMinutes = Math.floor((now - created) / (1000 * 60));
-            if (diffMinutes >= 60 * 24 * 3) {
+            if (diffMinutes >= 60 * 24 * 7) {
               await db.from('auction_house').delete().eq('id', action.id);
             }
           }
@@ -133,7 +133,12 @@ export default {
     async function verifyPlayer(playerId, callback = false) {
       const { data: player } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
       if (!player) {
-        await sendMsg(`⚠️ You don't have a *character*\\.`);
+        await sendMessage(
+          TELEGRAM_TOKEN,
+          body.message?.chat.id ?? body.callback_query.message.chat.id,
+          `⚠️ You don't have a *character*\\.`,
+          { parse_mode: 'MarkdownV2' },
+        );
         if (callback) {
           await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
             method: 'POST',
@@ -227,7 +232,7 @@ export default {
             TELEGRAM_TOKEN,
             chatId,
             messageId,
-            `✅ ALL items with rank of  *${rank}*  sold for  *$${price}*`,
+            `✅ All items with rank of  *${rank}*  sold for  *$${price}*`,
             { parse_mode: 'MarkdownV2' },
           );
         }
@@ -675,9 +680,254 @@ bet amount:  *$${session.data.bet}*
         await sendMsg(fact.replace('{user}', factMatch[1]));
         return new Response('OK', { status: 200 });
       }
+      //------------------------------------------/help
+      if (text.startsWith('/help')) {
+        if (textMatch[1] && textMatch[1] === 'فارسی') {
+          await sendMsg(`
+🎮 *راهنمای بازی*
+
+به دنیای بازی خوش اومدی\\!  
+تو یک ماجراجو هستی که باید بجنگی، آیتم جمع کنی و قوی‌تر بشی\\!
+
+${escapeMarkdownV2('──────────────────────')}
+🧍‍♂️ *ساخت شخصیت*
+/create 
+با این دستور کاراکتر خودت رو می‌سازی\\.  
+هر بازیکن فقط *یک شخصیت* می‌تونه داشته باشه\\.
+
+${escapeMarkdownV2('──────────────────────')}
+👤 *مشاهده پروفایل*
+/profile
+نمایش مشخصات بازیکن:  
+⭐ سطح  
+💰 پول  
+✨ امتیاز تجربه \\(XP\\)  
+🛡️ زره  
+💪 قدرت  
+❤️ استقامت  
+همچنین تجهیزات فعلی رو نشون می‌ده\\.
+
+برای دیدن بقیه بازیکنا:  
+/profile @username
+
+${escapeMarkdownV2('──────────────────────')}
+🎒 *آیتم‌ها*
+/items
+نمایش تمام آیتم‌های موجود در کیف\\، با امکان صفحه بعدی و قبلی \\(⬅️ ➡️\\)  
+هر آیتم شامل:  
+🛡️ زره \\| 💪 قدرت \\| 🩸 استقامت  
+
+رده‌بندی آیتم‌ها بر اساس کیفیت:  
+⚪ common  
+🟢 uncommon  
+🔵 rare  
+🟣 epic  
+🟠🔥 legendary 🔥
+
+${escapeMarkdownV2('──────────────────────')}
+🗡️ *تجهیز کردن آیتم*
+/equip
+بات ازت می‌خواد *ID آیتم* رو ریپلای کنی\\.  
+اون آیتم equip می‌شه و آیتم قبلی از همون نوع unequip می‌شه\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🌍 *ماجراجویی*
+/adventure  
+با این دستور وارد یک سفر ۳۰ دقیقه‌ای می‌شی\\!  
+بعد از اتمام، به‌صورت خودکار پاداش می‌گیری:  
+💰 پول  
+✨ XP  
+🎁 آیتم تصادفی  
+
+${escapeMarkdownV2('──────────────────────')}
+🎁 *هدیه دادن آیتم*
+/gift
+۱\\. ریپلای کن و نام کاربری هدف رو بنویس \\(مثل @username\\)  
+۲\\. سپس *ID آیتم* رو بفرست\\.  
+اگر طرف مقابل جا برای آیتم نداشته باشه انتقال انجام نمی‌شه\\.
+
+${escapeMarkdownV2('──────────────────────')}
+💸 *فروش آیتم‌ها*
+بر اساس ID:  
+/sell\\_by\\_id 
+بات ازت آی‌دی آیتم رو می‌پرسه و می‌فروشه\\.
+
+بر اساس رتبه \\(Rank\\):  
+/sell\\_by\\_rank  
+یکی از رتبه‌ها رو انتخاب می‌کنی \\(common\\/uncommon\\/rare\\/epic\\) تا همهٔ آیتم‌های اون رده فروخته بشن\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🏪 *فروشگاه*
+/shop
+فروشگاه هر روز ساعت ۰۰\\:۰۰ به وقت تهران به‌روزرسانی می‌شه\\.  
+هر آیتم با قیمت دوبرابر قیمت پایه فروخته می‌شه\\.  
+برای خرید، روی *Buy* بزن و سپس *ID آیتم* رو ریپلای کن\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🏦 *خانهٔ حراجی*
+/auction\\_house \\- مشاهدهٔ آیتم‌های درحال فروش  
+
+فروش آیتم:  
+/auction\\_house sell <itemID\\> <price\\>
+نیاز به ۵٪ کارمزد داره\\.
+
+خرید آیتم:  
+/auction\\_house buy <itemID\\>
+
+${escapeMarkdownV2('──────────────────────')}
+⚔️ *مبارزه*
+/fight
+۱\\. ریپلای کن و مبلغ شرط رو بنویس \\(Bet\\)  
+۲\\. سپس نام حریف رو ریپلای کن \\(مثل @username\\)  
+اگر حریف قبول کنه، نبرد آغاز می‌شه\\!  
+برنده پول شرط رو می‌بره و از بازنده کم می‌شه\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🧩 *نکات مهم*
+• ظرفیت کیف \\(Inventory\\) حداکثر ۳۰ آیتمه  
+• فروشگاه هر روز ریست می‌شه  
+• آیتم‌های حراجی بعد از ۳ روز حذف می‌شن  
+• زمان ماجراجویی حدود ۳۰ دقیقه‌ست  
+• نشست‌ها \\(Session\\) بعد از حدود ۱۲ ساعت منقضی می‌شن  
+
+${escapeMarkdownV2('──────────────────────')}
+🔰 *رده‌بندی کیفیت آیتم‌ها*
+⚪ *Common* \\- معمولی  
+🟢 *Uncommon* \\- کمیاب‌تر  
+🔵 *Rare* \\- نادر و قوی‌تر  
+🟣 *Epic* \\- بسیار قوی  
+🟠🔥 *Legendary* 🔥 \\- افسانه‌ای و خاص
+
+${escapeMarkdownV2('──────────────────────')}
+✨ از سفرت لذت ببر قهرمان\\!
+`);
+        } else {
+          await sendMsg(`
+🎮 *Game Guide*
+
+Welcome to the game\\!  
+You are an adventurer who fights, explores, and collects powerful items to grow stronger\\!
+
+${escapeMarkdownV2('──────────────────────')}
+🧍‍♂️ *Create Character*
+/create  
+Create your character\\. Each user can only have *one* character\\.
+
+${escapeMarkdownV2('──────────────────────')}
+👤 *Profile*
+/profile  
+Show your own stats:  
+⭐️ Level  
+💰 Money  
+✨ XP  
+🛡️ Armor  
+💪 Strength  
+❤️ Stamina  
+Also shows your equipped items\\.
+
+Check others:  
+/profile @username
+
+${escapeMarkdownV2('──────────────────────')}
+🎒 *Items*
+/items  
+See all your items with pages \\(⬅️ ➡️\\)  
+Each item has:  
+🛡️ Armor \\| 💪 Strength \\| 🩸 Stamina  
+
+Ranks:  
+⚪️ common  
+🟢 uncommon  
+🔵 rare  
+🟣 epic  
+🟠🔥 legendary 🔥
+
+${escapeMarkdownV2('──────────────────────')}
+🗡 *Equip Item*
+/equip  
+Bot asks you to reply with your *item ID*\\.  
+Equips that item and unequips the old one of same type\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🌍 *Adventure*
+/adventure  
+Start a 30\\-minute adventure\\!  
+After completion you automatically get rewards:  
+💰 Money  
+✨ XP  
+🎁 Random Item  
+
+${escapeMarkdownV2('──────────────────────')}
+🎁 *Gift Item*
+/gift  
+1\\. Reply with target username  
+2\\. Then reply with *item ID*  
+The target must have inventory space \\(max 30 items\\)\\.
+
+${escapeMarkdownV2('──────────────────────')}
+💸 *Sell Items*
+By ID:  
+/sell\\_by\\_id  
+Bot asks for your item ID then sells it\\.
+
+By Rank:  
+/sell\\_by\\_rank  
+Choose one rank \\(common\\/uncommon\\/rare\\/epic\\) to sell all items of that rank\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🏪 *Shop*
+/shop  
+Daily refreshed shop \\(00\\:00 Tehran time\\)\\.  
+Each item costs *2x its base price*\\.  
+Press *Buy* then reply with item ID to purchase\\.
+
+${escapeMarkdownV2('──────────────────────')}
+🏦 *Auction House*
+/auction\\_house \\- View items for sale
+
+Sell item:  
+/auction\\_house sell <itemID\\> <price\\>  
+\\(Requires 5% fee\\)
+
+Buy item:  
+/auction\\_house buy <itemID\\>
+
+${escapeMarkdownV2('──────────────────────')}
+⚔️ *Fight*
+/fight  
+1\\. Reply with *bet amount*  
+2\\. Then reply with opponent username  
+Opponent can accept or decline\\.  
+Winner earns the bet amount \\- loser pays it\\!
+
+${escapeMarkdownV2('──────────────────────')}
+🧩 *Notes*
+• Inventory limit: 30 items  
+• Shop resets daily  
+• Auction items expire after 3 days  
+• Adventure duration: \\~30 minutes  
+• Session expires after \\~12 hours  
+
+${escapeMarkdownV2('──────────────────────')}
+🔰 *Item Rank Colors*
+⚪️ *Common* \\- basic  
+🟢 *Uncommon* \\- improved  
+🔵 *Rare* \\- valuable  
+🟣 *Epic* \\- powerful  
+🟠🔥 *Legendary* 🔥 \\- the best
+
+${escapeMarkdownV2('──────────────────────')}
+Enjoy your journey, hero\\! ✨`);
+        }
+        return new Response('OK', { status: 200 });
+      }
       //------------------------------------------/create
       if (text.startsWith('/create')) {
         const username = body.message.from.username;
+        if (!username) {
+          await sendMsg(`⚠️ You need *username* to create a character\\.`);
+          return new Response('Error', { status: 200 });
+        }
         try {
           const { data: player } = await db.from('players').select('id').eq('id', fromId).maybeSingle();
           if (player) {
@@ -718,7 +968,7 @@ bet amount:  *$${session.data.bet}*
           await sendMsg(`
 ⭐*Level:  ${player.level}*
 💰*Money:  $${player.money}*
-⭐*XP:  ${player.xp}\\/${xpForNextLevel(player.level)}XP*
+✨*XP:  ${player.xp}\\/${xpForNextLevel(player.level)}XP*
 
 🛡️*Armor:  ${profile.armor}*
 💪*Strength:  ${profile.strength}*

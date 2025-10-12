@@ -1,29 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "telegram-worker-bot",
+  "name": "telegram-forgecraft-bot",
   "main": "src/index.js",
   "compatibility_date": "2025-10-08",
   "observability": {
     "enabled": true
-  },
-  "vars": {
-    "vars": {
-      "TELEGRAM_TOKEN": "8175408608:AAG0cz1UgtfE5DTQzGEdfxEW12-e6RAVF0M",
-      "TELEGRAM_MAIN_CHANNEL_ID": "-1002854783816",
-      "TELEGRAM_SUPPORT_CHANNEL_ID": "-1002573282674",
-
-      "SUPABASE_URL": "https://scpuygshpfldexfgtozb.supabase.co",
-      "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjcHV5Z3NocGZsZGV4Zmd0b3piIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NzUzNDc0OSwiZXhwIjoyMDczMTEwNzQ5fQ.ahCJoEidVfq6p1oRtumS1Q2Rth5pg7hcExXVZ1r5bpU"
-    }
   }
-  /**
-   * Static Assets
-   * https://developers.cloudflare.com/workers/static-assets/binding/
-   */
-  // "assets": { "directory": "./public/", "binding": "ASSETS" }
-  /**
-   * Service Bindings (communicate between multiple Workers)
-   * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-   */
-  // "services": [{ "binding": "MY_SERVICE", "service": "my-service" }]
 }

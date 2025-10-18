@@ -1,6 +1,5 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "telegram-forgecraft-bot",
   "main": "src/index.js",
   "compatibility_date": "2025-10-08",
   "observability": {

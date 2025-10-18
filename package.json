@@ -1,19 +1,19 @@
 {
-	"name": "telegram-worker-bot",
-	"version": "0.0.0",
-	"private": true,
-	"scripts": {
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
-		"start": "wrangler dev",
-		"test": "vitest"
-	},
-	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.8.19",
-		"vitest": "~3.2.0",
-		"wrangler": "^4.42.1"
-	},
-	"dependencies": {
-		"@supabase/supabase-js": "^2.74.0"
-	}
+  "name": "telegram-worker-bot",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy --name telegram-forgecraft-test-bot",
+    "deploy:main": "wrangler deploy --name telegram-forgecraft-bot",
+    "tail": "wrangler tail telegram-forgecraft-test-bot",
+    "tail:main": "wrangler tail telegram-forgecraft-bot"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.19",
+    "vitest": "~3.2.0",
+    "wrangler": "^4.42.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.74.0"
+  }
 }

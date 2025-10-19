@@ -185,7 +185,7 @@ export function quote(text) {
     .map((line) => `> ${line}`)
     .join('\n');
 }
-export function getUserProfile(items, playerLevel) {
+export function getUserProfile(items, playerLevel, dungeonLevel = 0) {
   const equipped = {
     weapon: items.find((x) => x.data.type === 'weapon' && x.status),
     shield: items.find((x) => x.data.type === 'shield' && x.status),
@@ -197,6 +197,7 @@ export function getUserProfile(items, playerLevel) {
   function calcTotal(stat) {
     return (
       playerLevel * (stat === 'armor' ? 5 : 1) +
+      dungeonLevel * (stat === 'armor' ? 5 : 1) +
       Object.values(equipped).reduce((sum, item) => sum + (item?.data?.[stat] ?? 0), 0)
     );
   }
@@ -206,6 +207,21 @@ export function getUserProfile(items, playerLevel) {
     strength: calcTotal('strength'),
     stamina: calcTotal('stamina'),
   };
+}
+export function getGuildProfile(donations) {
+  function moneyForNextGuildLevel(level) {
+    const baseMoney = 1000;
+    const growth = 1.12;
+    return baseMoney * growth ** (level - 1);
+  }
+  let level = 0;
+  let usedMoney = 0;
+  while (usedMoney <= donations) {
+    level++;
+    usedMoney += moneyForNextGuildLevel(level);
+  }
+  usedMoney -= moneyForNextGuildLevel(level);
+  return { level, mnfnl: moneyForNextGuildLevel(level), mhfnl: donations - usedMoney };
 }
 export function xpForNextLevel(level) {
   const baseXP = 100;

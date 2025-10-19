@@ -12,6 +12,7 @@ import {
   escapeMarkdownV2,
   quote,
   getUserProfile,
+  getGuildProfile,
   xpForNextLevel,
   rankDisplay,
   dungeonPower,
@@ -146,7 +147,18 @@ export default {
                     .from('player_items')
                     .select(`*, data:items(*)`)
                     .eq('player_id', player.id);
-                  const profile = getUserProfile(items, player.level);
+                  let profile = {};
+                  if (player.guild_id) {
+                    const { data: guildDonations } = await db
+                      .from('guild_donations')
+                      .select(`amount`)
+                      .eq('guild_id', player.guild_id);
+                    const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+                    const guildProfile = getGuildProfile(totalDonations);
+                    profile = getUserProfile(items, player.level, guildProfile.level);
+                  } else {
+                    profile = getUserProfile(items, player.level);
+                  }
                   const playerPower = Math.floor(
                     (profile.armor + profile.strength * 5 + profile.stamina * 5) / 3,
                   );
@@ -339,11 +351,12 @@ export default {
           const members = guildPlayers.filter((player) => player.guild_id == guild.id);
           const donations = guildDonations.filter((donate) => donate.guild_id == guild.id) ?? [];
           const totalDonations = donations.reduce((sum, donate) => sum + donate.amount, 0);
+          const guildProfile = getGuildProfile(totalDonations);
           if (message) message += escapeMarkdownV2(`\n-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n`);
           message += `🏛️ *${toTitleCase(guild.name)}*
-Level:  *${guild.level}*
+Level:  *${guildProfile.level}*
 Members:  *${members.length}/10*
-Power bonus:  *\\+${guild.level}*
+Power bonus:  *\\+${guildProfile.level}*
 Total donations:  *${totalDonations}*`;
           i++;
         }
@@ -461,8 +474,19 @@ Total donations:  *${totalDonations}*`;
         }
         //------------------------------------------/profile
         if (data === 'profile') {
-          const items = await getPlayerItems(fromId);
-          const profile = getUserProfile(items, player.level);
+          const items = await getPlayerItems(player.id);
+          let profile = {};
+          if (player.guild_id) {
+            const { data: guildDonations } = await db
+              .from('guild_donations')
+              .select(`amount`)
+              .eq('guild_id', player.guild.id);
+            const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+            const guildProfile = getGuildProfile(totalDonations);
+            profile = getUserProfile(items, player.level, guildProfile.level);
+          } else {
+            profile = getUserProfile(items, player.level);
+          }
 
           await editInlineMsg(`
 @${escapeMarkdownV2(player.username)} *Profile*
@@ -522,17 +546,25 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
             { buttons },
           );
         }
-        if (data.startsWith('dungeon')) {
+        if (data.startsWith('dungeon_')) {
           const id = parseInt(data.split('_')[1]);
           const { data: dungeon } = await db.from('dungeons').select('*').eq('id', id).maybeSingle();
           const isAccepted = data.split('_')[2];
           const targetId = data.split('_')[3];
           if (!isAccepted) {
-            const { data: items } = await db
-              .from('player_items')
-              .select(`*, data:items(*)`)
-              .eq('player_id', player.id);
-            const profile = getUserProfile(items, player.level);
+            let profile = {};
+            const items = await getPlayerItems(player.id);
+            if (player.guild_id) {
+              const { data: guildDonations } = await db
+                .from('guild_donations')
+                .select(`amount`)
+                .eq('guild_id', player.guild_id);
+              const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              profile = getUserProfile(items, player.level, guildProfile.level);
+            } else {
+              profile = getUserProfile(items, player.level);
+            }
             const playerPower = Math.round((profile.armor + profile.strength * 5 + profile.stamina * 5) / 3);
             const dunPower = dungeonPower(dungeon.id, true);
             editImg(
@@ -652,13 +684,35 @@ Advised Gear for Survival:
             const player = session.data.player;
             const target = session.data.target;
             if (target.money < bet) throw new Error(`❗ You don't have enough money to pay the bet.`);
-            const playeritems = await getPlayerItems(player.id);
-            const pp = getUserProfile(playeritems, player.level);
+            const playerItems = await getPlayerItems(player.id);
+            let pp = {};
+            if (player.guild_id) {
+              const { data: guildDonations } = await db
+                .from('guild_donations')
+                .select(`amount`)
+                .eq('guild_id', player.guild_id);
+              const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              pp = getUserProfile(playerItems, player.level, guildProfile.level);
+            } else {
+              pp = getUserProfile(playerItems, player.level);
+            }
             pp.hp = pp.stamina * 10;
             pp.dps = pp.strength;
             pp.dpsTake = (4000 - pp.armor) / 4000;
-            const targetitems = await getPlayerItems(target.id);
-            const tp = getUserProfile(targetitems, target.level);
+            const targetItems = await getPlayerItems(target.id);
+            let tp = {};
+            if (target.guild_id) {
+              const { data: guildDonations } = await db
+                .from('guild_donations')
+                .select(`amount`)
+                .eq('guild_id', target.guild_id);
+              const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              tp = getUserProfile(targetItems, target.level, guildProfile.level);
+            } else {
+              tp = getUserProfile(targetItems, target.level);
+            }
             tp.hp = tp.stamina * 10;
             tp.dps = tp.strength;
             tp.dpsTake = (4000 - tp.armor) / 4000;
@@ -738,9 +792,18 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         if (data === 'leaderboard') {
           let { data: players } = await db.from('players').select('*');
           const { data: playersItems } = await db.from('player_items').select(`*, data:items(*)`);
+          const { data: guildDonations } = await db.from('guild_donations').select(`guild_id, amount`);
           players = players.map((player) => {
             const items = playersItems.filter((item) => item.player_id === player.id);
-            const profile = getUserProfile(items, player.level);
+            let profile = {};
+            if (player.guild_id) {
+              const donations = guildDonations.filter((donation) => donation.guild_id === player.guild_id);
+              const totalDonations = donations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              profile = getUserProfile(items, player.level, guildProfile.level);
+            } else {
+              profile = getUserProfile(items, player.level);
+            }
             player.score = profile.armor + profile.strength * 5 + profile.stamina * 5;
             player.armor = profile.armor;
             player.strength = profile.strength;
@@ -752,7 +815,9 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
           let i = 0;
           while (i < 5) {
             if (message)
-              message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+              message += escapeMarkdownV2(
+                `\n-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n`,
+              );
             message += `*\\#${i + 1}*  @${escapeMarkdownV2(playersRank[i].username)}
 🛡️: *${playersRank[i].armor}*    \\|    💪: *${playersRank[i].strength}*    \\|    🩸: *${
               playersRank[i].stamina
@@ -1202,6 +1267,8 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
           }
         }
         //------------------------------------------
+        await deleteMessage(TELEGRAM_TOKEN, chatId, repliedTo.message_id);
+        await deleteMessage(TELEGRAM_TOKEN, chatId, body.message.message_id);
         return new Response('OK', { status: 200 });
       }
       // ---------------------- Commands ---------------------- //
@@ -1501,7 +1568,18 @@ Enjoy your journey, hero\\! ✨`);
             localPlayer = targetPlayer;
           }
           const items = await getPlayerItems(localPlayer.id);
-          const profile = getUserProfile(items, localPlayer.level);
+          let profile = {};
+          if (localPlayer.guild_id) {
+            const { data: guildDonations } = await db
+              .from('guild_donations')
+              .select(`amount`)
+              .eq('guild_id', localPlayer.guild_id);
+            const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+            const guildProfile = getGuildProfile(totalDonations);
+            profile = getUserProfile(items, localPlayer.level, guildProfile.level);
+          } else {
+            profile = getUserProfile(items, localPlayer.level);
+          }
 
           await sendMsg(`
 ⭐*Level:  ${localPlayer.level}*
@@ -1549,7 +1627,6 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           if (adventure) throw new Error('⚠️ You already in an adventure.');
           const items = await getPlayerItems(player.id);
           if (items.length >= 30) throw new Error(`⚠️ Your inventory is full.`);
-          const profile = getUserProfile(items, player.level);
           const moneyReward = Math.floor(player.level + Math.random() * (player.level * 0.5));
           const xpReward = Math.floor((player.level + Math.random() * (player.level * 0.5)) * 20);
           let rank = 'common';
@@ -1564,9 +1641,6 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           const { error: insertError } = await db.from('adventures').insert([
             {
               player_id: fromId,
-              armor: profile.armor,
-              strength: profile.strength,
-              stamina: profile.stamina,
               item_reward: itemReward.id,
               money_reward: moneyReward,
               xp_reward: xpReward,
@@ -1581,9 +1655,6 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
 💰 Money Reward:  *$${moneyReward}*
 ✨ XP Gain:  *${xpReward}XP*
 🎁 Item:  *${rankDisplay(itemReward)}*
-
-Current Stats:
-🛡️: *${profile.armor}*    \\|    💪: *${profile.strength}*    \\|    🩸: *${profile.stamina}*
             `);
         }
         //------------------------------------------/map
@@ -1657,9 +1728,18 @@ example → 89 43 523
         if (isCommand(text, 'leaderboard')) {
           let { data: players } = await db.from('players').select('*');
           const { data: playersItems } = await db.from('player_items').select(`*, data:items(*)`);
+          const { data: guildDonations } = await db.from('guild_donations').select(`guild_id, amount`);
           players = players.map((player) => {
             const items = playersItems.filter((item) => item.player_id === player.id);
-            const profile = getUserProfile(items, player.level);
+            let profile = {};
+            if (player.guild_id) {
+              const donations = guildDonations.filter((donation) => donation.guild_id === player.guild_id);
+              const totalDonations = donations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              profile = getUserProfile(items, player.level, guildProfile.level);
+            } else {
+              profile = getUserProfile(items, player.level);
+            }
             player.score = profile.armor + profile.strength * 5 + profile.stamina * 5;
             player.armor = profile.armor;
             player.strength = profile.strength;
@@ -1671,7 +1751,9 @@ example → 89 43 523
           let i = 0;
           while (i < 5) {
             if (message)
-              message += `\n\\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-  \\-\n`;
+              message += escapeMarkdownV2(
+                `\n-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -\n`,
+              );
             message += `*\\#${i + 1}*  @${escapeMarkdownV2(playersRank[i].username)}
 🛡️: *${playersRank[i].armor}*    \\|    💪: *${playersRank[i].strength}*    \\|    🩸: *${
               playersRank[i].stamina
@@ -1684,7 +1766,6 @@ example → 89 43 523
         if (isCommand(text, 'guild')) {
           let text;
           const buttons = [];
-          console.log(player.guild);
           if (!player.guild) {
             text = `You are not in any guild\\.`;
             buttons.push([{ text: `📃 Guilds List   `, callback_data: `guild_list_1` }]);
@@ -1700,12 +1781,14 @@ example → 89 43 523
               .eq('guild_id', player.guild.id);
             const yourDonation = guildDonations.find((donate) => donate.player_id == player.id) ?? 0;
             const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+            const guildProfile = getGuildProfile(totalDonations);
             text = `
 🏛️ *${toTitleCase(player.guild.name)}*
 
-Level:  *${player.guild.level}*
+Level:  *${guildProfile.level}*
 Members:  *${guildPlayers.length}/10*
-Power bonus:  *\\+${player.guild.level}*
+Power bonus:  *\\+${guildProfile.level}*
+MFNL:  *$${guildProfile.mhfnl}/$${guildProfile.mnfnl}*
 Your donations:  *$${yourDonation.amount}*
 Total donations:  *$${totalDonations}*
             `;

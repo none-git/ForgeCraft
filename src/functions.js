@@ -212,7 +212,8 @@ export function getGuildProfile(donations) {
   function moneyForNextGuildLevel(level) {
     const baseMoney = 1000;
     const growth = 1.12;
-    return baseMoney * growth ** (level - 1);
+    const base = 100;
+    return Math.round((baseMoney * growth ** (level - 1)) / base) * base;
   }
   let level = 0;
   let usedMoney = 0;

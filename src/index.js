@@ -380,6 +380,23 @@ Total donations:  *${totalDonations}*`;
           });
         }
       }
+      async function getSession(chatId, messageId, playerId) {
+        const { data: session } = await db
+          .from('sessions')
+          .select('*')
+          .eq('id', chatId + '_' + messageId)
+          .maybeSingle();
+        if (session && session.player_id != playerId) throw new Error(`🚫`);
+        if (!session) {
+          await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
+          if (body.callback_query) {
+            throw new Error(`❗ Session expired.`);
+          } else {
+            throw new Error(`⚠️ Session expired.`);
+          }
+        }
+        return session;
+      }
       // ---------------------- InlineMode ---------------------- //
       if (body.inline_query) {
         const inlineQuery = body.inline_query;
@@ -433,24 +450,30 @@ Total donations:  *${totalDonations}*`;
         const inlineMessageId = body.callback_query.inline_message_id;
         const data = body.callback_query.data;
         const player = await verifyPlayer(fromId, fromUsername, true);
-        async function sendMsg(messageText, { reply = false, buttons = null } = {}) {
-          const options = { parse_mode: 'MarkdownV2' };
-          if (reply) options.reply_markup = { force_reply: true, selective: true };
-          if (buttons) options.reply_markup = { inline_keyboard: buttons };
-          return await sendMessage(TELEGRAM_TOKEN, chatId, messageText, options);
-        }
-        async function editMsg(
+        async function sendMsg(
           messageText,
-          { reply = false, buttons = null, chatID = chatId, messageID = messageId } = {},
+          { reply = false, buttons = null, to = chatId, replyData = null } = {},
         ) {
           const options = { parse_mode: 'MarkdownV2' };
           if (reply) options.reply_markup = { force_reply: true, selective: true };
           if (buttons) options.reply_markup = { inline_keyboard: buttons };
+          const sent = await sendMessage(TELEGRAM_TOKEN, to, messageText, options);
+          if (reply) {
+            await db.from('sessions').upsert({
+              id: to + '_' + sent.message_id,
+              player_id: fromId,
+              data: replyData,
+            });
+          }
+          return sent;
+        }
+        async function editMsg(messageText, { buttons = null, chatID = chatId, messageID = messageId } = {}) {
+          const options = { parse_mode: 'MarkdownV2' };
+          if (buttons) options.reply_markup = { inline_keyboard: buttons };
           return await editMessage(TELEGRAM_TOKEN, chatID, messageID, messageText, options);
         }
-        async function editImg(photo, { reply = false, buttons = null, caption = null } = {}) {
+        async function editImg(photo, { buttons = null, caption = null } = {}) {
           const options = { parse_mode: 'MarkdownV2' };
-          if (reply) options.reply_markup = { force_reply: true, selective: true };
           if (buttons) options.reply_markup = { inline_keyboard: buttons };
           if (caption) options.caption = caption;
           return await editPhoto(TELEGRAM_TOKEN, chatId, messageId, photo, options);
@@ -464,16 +487,16 @@ Total donations:  *${totalDonations}*`;
           await answerCallbackQuery(TELEGRAM_TOKEN, body.callback_query.id, messageText, showAlert);
         }
         //------------------------------------------/dev
-        if (data.startsWith('dev')) {
-          const command = data.split('_')[1];
+        if (data.split('_')[0] === 'dev') {
           if (!ADMINS.includes(fromId)) throw new Error(`❗ Only admins can use this command`);
-          if (command === 'whisper')
+          if (data.split('_')[1] === 'whisper') {
             await sendMsg('Dev Whisper \\- Reply and enter your *Target*', { reply: true });
-          if (command === 'globalMessage')
+          } else if (data.split('_')[1] === 'globalMessage') {
             await sendMsg('Dev Global Message \\- Reply and enter your *Message*', { reply: true });
+          }
         }
         //------------------------------------------/profile
-        if (data === 'profile') {
+        if (data.split('_')[0] === 'profile') {
           const items = await getPlayerItems(player.id);
           let profile = {};
           if (player.guild_id) {
@@ -507,7 +530,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           `);
         }
         //------------------------------------------/inventory
-        if (data.startsWith('inventory')) {
+        if (data.split('_')[0] === 'inventory') {
           if (data.split('_')[1] === 'page') {
             const page = parseInt(data.split('_')[2]);
             const playerId = parseInt(data.split('_')[3]) || fromId;
@@ -529,7 +552,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
             },
           );
         }
-        if (data === 'dungeons') {
+        if (data.split('_')[0] === 'dungeons') {
           const { data: dungeons } = await db.from('dungeons').select('*');
           const buttons = [];
           let i = 0;
@@ -546,7 +569,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
             { buttons },
           );
         }
-        if (data.startsWith('dungeon_')) {
+        if (data.split('_')[0] === 'dungeon') {
           const id = parseInt(data.split('_')[1]);
           const { data: dungeon } = await db.from('dungeons').select('*').eq('id', id).maybeSingle();
           const isAccepted = data.split('_')[2];
@@ -622,7 +645,7 @@ Advised Gear for Survival:
           }
         }
         //------------------------------------------/sell_by_rank
-        if (data.startsWith('sellBy_rank')) {
+        if (data === 'sellBy_rank') {
           const rank = data.split('_')[2];
           let items = await getPlayerItems(fromId);
           items = items.filter((item) => item.data.rank === rank);
@@ -642,7 +665,7 @@ Advised Gear for Survival:
           await sendMsg('Shop \\- Reply and enter the *item ID*', { reply: true });
         }
         //------------------------------------------/market
-        if (data.startsWith('market')) {
+        if (data.split('_')[0] === 'market') {
           const actionType = data.split('_')[1];
           if (actionType === 'page') {
             const page = parseInt(data.split('_')[2]);
@@ -654,31 +677,20 @@ Advised Gear for Survival:
           }
         }
         //------------------------------------------/duel
-        if (data.startsWith('duel')) {
+        if (data.split('_')[0] === 'duel') {
           const isAccepted = data.split('_')[1];
           const targetId = data.split('_')[2];
           if (fromId != targetId) throw new Error(`❗ Only the invited person can answer.`);
-          const { data: session } = await db
-            .from('sessions')
-            .select('*')
-            .eq('id', chatId + '_' + messageId)
-            .eq('player_id', targetId)
-            .maybeSingle();
-          if (!session) {
-            await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
-            throw new Error(`⚠️ Session expired.`);
-          }
+          const session = await getSession(chatId, messageId, targetId);
           if (isAccepted === 'no') {
             await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
             const baseMessageId = session.data.baseMessageId;
-            const player = session.data.player;
             if (baseMessageId)
               await editMsg(`⚔️ The opponent has refused your duel challenge\\.`, {
-                chatID: player.id,
+                chatID: session.data.player.id,
                 messageID: baseMessageId,
               });
-          }
-          if (isAccepted === 'yes') {
+          } else if (isAccepted === 'yes') {
             const baseMessageId = session.data.baseMessageId;
             const bet = session.data.bet;
             const player = session.data.player;
@@ -789,7 +801,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
           }
         }
         //------------------------------------------/leaderboard
-        if (data === 'leaderboard') {
+        if (data.split('_')[0] === 'leaderboard') {
           let { data: players } = await db.from('players').select('*');
           const { data: playersItems } = await db.from('player_items').select(`*, data:items(*)`);
           const { data: guildDonations } = await db.from('guild_donations').select(`guild_id, amount`);
@@ -827,43 +839,153 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
           await editInlineMsg(message);
         }
         //------------------------------------------/guild
-        if (data.startsWith('guild')) {
+        if (data.split('_')[0] === 'guild') {
           if (data.split('_')[1] === 'donate') {
             if (!player.guild) throw new Error(`❗ You aren't a member of any guild.`);
             await sendMsg('Guild \\- Reply and enter the *Donation amount*', { reply: true });
-          }
-          if (data.split('_')[1] === 'broadcast') {
+          } else if (data.split('_')[1] === 'broadcast') {
             if (!player.guild || player.guild.owner !== player.id) {
               throw new Error(`❗ You aren't owner of any guild.`);
             }
-          }
-          if (data.split('_')[1] === 'transfer') {
             if (!player.guild || player.guild.owner !== player.id) {
               throw new Error(`❗ You aren't owner of any guild.`);
             }
-          }
-          if (data.split('_')[1] === 'members') {
+          } else if (data.split('_')[1] === 'members') {
             if (!player.guild || player.guild.owner !== player.id) {
               throw new Error(`❗ You aren't owner of any guild.`);
             }
-          }
-          if (data.split('_')[1] === 'leave') {
+            const { data: guildMembers } = await db
+              .from('players')
+              .select(`id, username`)
+              .eq('guild_id', player.guild_id);
+            const members = guildMembers.filter((member) => member.id !== player.id);
+            let column = 1;
+            if (members.length >= 4) column = 2;
+            if (members.length > 6) column = 3;
+            const buttons = [];
+            let row = 0;
+            while (row < members.length / column) {
+              const x = row * column;
+              const rowButtons = [];
+              let i = 0;
+              while (i < column) {
+                if (members[x + i]) {
+                  rowButtons.push({
+                    text: members[x + i].username,
+                    callback_data: `guild_member_${members[x + i].id}`,
+                  });
+                }
+                i++;
+              }
+              buttons.push(rowButtons);
+              row++;
+            }
+            await editMsg('*Members:*', { buttons: buttons });
+          } else if (data.split('_')[1] === 'member') {
+            if (!player.guild || player.guild.owner !== player.id) {
+              throw new Error(`❗ You aren't owner of any guild.`);
+            }
+            const playerId = data.split('_')[2];
+            const action = data.split('_')[3];
+            const { data: guildMembers } = await db
+              .from('players')
+              .select(`id, username`)
+              .eq('guild_id', player.guild.id);
+            const member = guildMembers.find((member) => member.id == playerId);
+            if (!member) throw new Error(`❗ This player is not a memeber of your guild.`);
+            const { data: guildDonations } = await db
+              .from('guild_donations')
+              .select(`player_id, amount`)
+              .eq('guild_id', player.guild.id);
+            const memberDonation = guildDonations.find((donate) => donate.player_id == playerId)?.amount ?? 0;
+            const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+            if (!action) {
+              const buttons = [];
+              if (memberDonation < totalDonations / guildMembers.length / 2)
+                buttons.push([{ text: '💣 Kick', callback_data: `guild_member_${playerId}_kick` }]);
+              buttons.push([
+                { text: '👑 Transfer Owner', callback_data: `guild_member_${playerId}_transfer` },
+              ]);
+              buttons.push([{ text: '⬅️ Back', callback_data: `guild_members` }]);
+              await editMsg(
+                `
+@${escapeMarkdownV2(member.username)}
+
+donation:  *$${memberDonation}*`,
+                { buttons },
+              );
+            } else if (action === 'kick') {
+              if (memberDonation > totalDonations / guildMembers.length / 2) {
+                throw new Error(`❗ You can't kick this member.`);
+              }
+              await db.from('players').update({ guild_id: null }).eq('id', playerId);
+              await answerCallback(`✅ @${member.username} kicked from the guild.`, true);
+              await sendMsg(`💣 You kicked from the guild by guild owner\\.`, { to: playerId });
+            } else if (action === 'transfer') {
+              const transferAction = data.split('_')[4];
+              if (!transferAction) {
+                await editMsg(
+                  `
+*ARE YOU SURE?*
+
+Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
+                  {
+                    buttons: [
+                      [
+                        { text: '❌', callback_data: `guild_members` },
+                        { text: '✅', callback_data: `guild_member_${playerId}_transfer_yes` },
+                      ],
+                    ],
+                  },
+                );
+              } else if (transferAction === 'yes') {
+                await db.from('guilds').update({ owner: playerId }).eq('id', player.guild.id);
+                await answerCallback(`✅ You transferred ownership to ${member.username}.`, true);
+                await sendMsg(
+                  `👑 You'ar now the owner of *${escapeMarkdownV2(player.guild.name)}* guild\\.`,
+                  { to: playerId },
+                );
+              }
+            }
+          } else if (data.split('_')[1] === 'leave') {
             if (!player.guild) throw new Error(`❗ You aren't a member of any guild.`);
             await db.from('players').update({ guild_id: null }).eq('id', player.id);
             await answerCallback(`✅ You left your guild.`, true);
             await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
-          }
-          if (data.split('_')[1] === 'list') {
+          } else if (data.split('_')[1] === 'list') {
             if (player.guild) throw new Error(`❗ You are a member of a guild.`);
             const page = parseInt(data.split('_')[2]);
             await showGuildsPage(chatId, page, { messageId });
-          }
-          if (data.split('_')[1] === 'join') {
+          } else if (data.split('_')[1] === 'join') {
             if (player.guild) throw new Error(`❗ You are a member of a guild.`);
-            await sendMsg('Guild Join \\- Reply and enter the *Guild name*', { reply: true });
-          }
-          if (data.split('_')[1] === 'create') {
+            await sendMsg('Guild \\- Reply and enter the *Guild name*', { reply: true });
+          } else if (data.split('_')[1] === 'create') {
             if (player.guild) throw new Error(`❗ You are a member of a guild.`);
+            const action = data.split('_')[2];
+            if (!action) {
+              await sendMsg('Guild \\- Reply and enter your *Guild name*', { reply: true });
+            } else if (action === 'no') {
+              await getSession(chatId, messageId, player.id);
+              await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
+            } else if (action === 'yes') {
+              const session = await getSession(chatId, messageId, player.id);
+              if (player.money < 10000) throw new Error(`❗ You don't have enough money.`);
+              await db
+                .from('players')
+                .update({ money: player.money - 10000 })
+                .eq('id', fromId);
+              await db.from('guilds').upsert({ name: session.data.name, owner: player.id });
+              const { data: guild } = await db
+                .from('guilds')
+                .select('id')
+                .eq('name', session.data.name)
+                .maybeSingle();
+              await db.from('players').update({ guild_id: guild.id }).eq('id', player.id);
+              await answerCallback(
+                `✅ You created the  🏛️ *${toTitleCase(session.data.name)}*  guild.`,
+                true,
+              );
+            }
           }
         }
         //------------------------------------------
@@ -881,46 +1003,49 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         const chatId = body.message.chat.id;
         const text = body.message.text;
         const repliedTo = body.message.reply_to_message;
-        if (repliedTo.from.id !== bot.result.id) return new Response('OK', { status: 200 });
+        if (repliedTo.from.id !== bot.result.id) throw new Error(`🚫`);
         const player = await verifyPlayer(fromId, fromUsername);
-        async function sendMsg(messageText, { reply = false, buttons = null, to = chatId } = {}) {
+        async function sendMsg(
+          messageText,
+          { reply = false, buttons = null, replyData = null, to = chatId } = {},
+        ) {
           const options = { parse_mode: 'MarkdownV2' };
-          if (reply) options.reply_markup = { force_reply: true, selective: true };
+          if (reply) {
+            options.reply_to_message_id = body.message.message_id;
+            options.reply_markup = { force_reply: true, selective: true };
+          }
           if (buttons) options.reply_markup = { inline_keyboard: buttons };
-          return await sendMessage(TELEGRAM_TOKEN, to, messageText, options);
-        }
-        async function getSession() {
-          const { data: session } = await db
-            .from('sessions')
-            .select('*')
-            .eq('id', chatId + '_' + repliedTo.message_id)
-            .eq('player_id', fromId)
-            .maybeSingle();
-          if (!session) throw new Error(`⚠️ Session expired.`);
-          return session;
+          const sent = await sendMessage(TELEGRAM_TOKEN, to, messageText, options);
+          if (reply) {
+            await db.from('sessions').upsert({
+              id: to + '_' + sent.message_id,
+              player_id: fromId,
+              data: replyData,
+            });
+          }
+          return sent;
         }
         //------------------------------------------/dev
         if (repliedTo.text.startsWith('Dev')) {
           if (repliedTo.text.includes('Dev Whisper - Reply and enter your Target')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const playerId = parseInt(text);
             if (isNaN(playerId)) throw new Error('⚠️ ID must be a Number.');
-
             const { data: target } = await db.from('players').select('*').eq('id', playerId).maybeSingle();
             if (!target) throw new Error(`⚠️ Your target doesn't have a character.`);
-            const sent = await sendMsg('Dev Whisper \\- Reply and enter your *Message*', { reply: true });
-            await db.from('sessions').upsert({
-              id: chatId + '_' + sent.message_id,
-              player_id: fromId,
-              data: { playerId },
+            await sendMsg('Dev Whisper \\- Reply and enter your *Message*', {
+              reply: true,
+              replyData: { playerId },
             });
           }
           if (repliedTo.text.includes('Dev Whisper - Reply and enter your Message')) {
+            const session = await getSession(chatId, repliedTo.message_id, fromId);
             const message = `*👨‍💻 ForgeCraft Dev Team:*\n` + quote(escapeMarkdownV2(text));
-            const session = await getSession();
             const sent = await sendMsg(message, { to: session.data.playerId });
             if (!sent) throw Error(`⚠️ Cant send message to ${session.data.playerId}`);
           }
           if (repliedTo.text.includes('Dev Global Message - Reply and enter your Message')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const message = `*📜 Message from the Guild Master:*\n` + quote(escapeMarkdownV2(text));
             const { data: players } = await db.from('players').select('*');
             const results = await Promise.allSettled(
@@ -936,6 +1061,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         }
         //------------------------------------------/feedback
         if (repliedTo.text.includes('Feedback - Reply and enter your Feedback')) {
+          await getSession(chatId, repliedTo.message_id, fromId);
           const message =
             `*Feedback from ID: ${fromId}\nMessage ID: ${body.message.message_id}*\n` +
             quote(escapeMarkdownV2(text));
@@ -972,9 +1098,9 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         }
         //------------------------------------------/equip
         if (repliedTo.text.includes('Equip - Reply and enter your item ID')) {
+          await getSession(chatId, repliedTo.message_id, fromId);
           const itemId = parseInt(text);
           if (isNaN(itemId)) throw new Error('⚠️ ID must be a Number.');
-
           const items = await getPlayerItems(fromId);
           const item = items.find((item) => item.id === itemId);
           if (!item) throw new Error(`⚠️ You don't have this item.`);
@@ -987,6 +1113,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         //------------------------------------------/gift
         if (repliedTo.text.startsWith('Gift')) {
           if (repliedTo.text.includes('Gift - Reply and enter your Target')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             let targetUsername = text.trim();
             if (!targetUsername) {
               throw new Error('⚠️ Target must be a User.');
@@ -1002,17 +1129,12 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
             if (player.id === target.id) throw new Error(`⚠️ You can't gift yourself.`);
             const items = await getPlayerItems(target.id);
             if (items.length >= 30) throw new Error(`⚠️ Your target inventory is full.`);
-            const sent = await sendMsg('Gift \\- Reply and enter your *item ID*', { reply: true });
-            await db.from('sessions').upsert({
-              id: chatId + '_' + sent.message_id,
-              player_id: fromId,
-              data: { target },
-            });
+            await sendMsg('Gift \\- Reply and enter your *item ID*', { reply: true, replyData: { target } });
           }
           if (repliedTo.text.includes('Gift - Reply and enter your item ID')) {
+            const session = await getSession(chatId, repliedTo.message_id, fromId);
             const itemId = parseInt(text);
             if (isNaN(itemId)) throw new Error('⚠️ ID must be a Number.');
-            const session = await getSession();
             const target = session.data.target;
             const { data: item } = await db
               .from('player_items')
@@ -1026,13 +1148,14 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
             await sendMsg(`${rankDisplay(item.data)} gifted to @${escapeMarkdownV2(target.username)}`);
             await sendMsg(
               `
-@${escapeMarkdownV2(player.username)} has gifted you ${rankDisplay(item.data)} \\- cherish it well\\.`,
-              { to: target.username },
+@${escapeMarkdownV2(player.username)} has gifted you:\n${rankDisplay(item.data)}`,
+              { to: target.id },
             );
           }
         }
         //------------------------------------------/sell_by_id
         if (repliedTo.text.includes('Sell - Reply and enter your item ID')) {
+          await getSession(chatId, repliedTo.message_id, fromId);
           const items = text.trim().split(/\s+/);
           const { data: playerItems } = await db
             .from('player_items')
@@ -1056,6 +1179,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         }
         //------------------------------------------/shop
         if (repliedTo.text.includes('Shop - Reply and enter the item ID')) {
+          await getSession(chatId, repliedTo.message_id, fromId);
           const itemId = parseInt(text);
           if (isNaN(itemId)) throw new Error('⚠️ ID must be a Number.');
           const { data: shopItem } = await db
@@ -1080,6 +1204,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         //------------------------------------------/market
         if (repliedTo.text.startsWith('Market')) {
           if (repliedTo.text.includes('Market - Reply and enter the item ID')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const itemId = parseInt(text);
             if (isNaN(itemId)) throw new Error('⚠️ ID must be a Number.');
             const items = await getPlayerItems(player.id);
@@ -1118,6 +1243,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
             );
           }
           if (repliedTo.text.includes('Market - Reply and enter your item ID')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const itemId = parseInt(text);
             if (isNaN(itemId)) throw new Error('⚠️ ID must be a Number.');
             const { data: item } = await db
@@ -1127,19 +1253,17 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
               .eq('player_id', player.id)
               .maybeSingle();
             if (!item) throw new Error(`⚠️ You don't have this item.`);
-            const sent = await sendMsg('Market \\- Reply and enter the *Price*', { reply: true });
-            await db.from('sessions').upsert({
-              id: chatId + '_' + sent.message_id,
-              player_id: player.id,
-              data: { item },
+            await sendMsg('Market \\- Reply and enter the *Price*', {
+              reply: true,
+              replyData: { item },
             });
           }
           if (repliedTo.text.includes('Market - Reply and enter the Price')) {
+            const session = await getSession(chatId, repliedTo.message_id, fromId);
             const price = parseInt(text);
             if (isNaN(price) || price < 0) throw new Error('⚠️ Price must be a Positive Number.');
             if (player.money < price * 0.05)
               throw new Error(`⚠️ You don't have enough money to pay the fee.`);
-            const session = await getSession();
             await db
               .from('players')
               .update({ money: player.money - price * 0.05 })
@@ -1151,24 +1275,23 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         //------------------------------------------/duel
         if (repliedTo.text.startsWith('Duel')) {
           if (repliedTo.text.includes('Duel - Reply and enter the Bet amount')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const bet = parseInt(text);
             if (isNaN(bet) || bet < 0) throw new Error('⚠️ Bet amount must be a Positive Number.');
             if (player.money < bet) throw new Error(`⚠️ You don't have enough money to pay the bet.`);
-            const sent = await sendMsg('Duel \\- Reply and enter your *Target*', { reply: true });
-            await db.from('sessions').upsert({
-              id: chatId + '_' + sent.message_id,
-              player_id: fromId,
-              data: { bet },
+            await sendMsg('Duel \\- Reply and enter your *Target*', {
+              reply: true,
+              replyData: { bet },
             });
           }
           if (repliedTo.text.includes('Duel - Reply and enter your Target')) {
+            const session = await getSession(chatId, repliedTo.message_id, fromId);
             let targetUsername = text.trim();
             if (!targetUsername) {
               throw new Error('⚠️ Target must be a User.');
             } else {
               targetUsername = targetUsername.slice(1);
             }
-            const session = await getSession();
             const { data: target } = await db
               .from('players')
               .select('*')
@@ -1229,6 +1352,7 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         //------------------------------------------/guild
         if (repliedTo.text.startsWith('Guild')) {
           if (repliedTo.text.includes('Guild - Reply and enter the Donation amount')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const amount = parseInt(text);
             if (isNaN(amount)) throw new Error('⚠️ Donation amount must be a Number.');
             if (amount < 500) throw new Error('⚠️ The minimum donation amount is $500.');
@@ -1249,26 +1373,56 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
                 .from('guild_donations')
                 .upsert({ guild_id: player.guild.id, player_id: fromId, amount: amount });
             }
+            await db
+              .from('players')
+              .update({ money: player.money - amount })
+              .eq('id', fromId);
             await sendMsg(`✅ You donated *$${amount}* to your guild`);
           }
           if (repliedTo.text.includes('Guild - Reply and enter your Message')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
           }
-          if (repliedTo.text.includes('Guild Join - Reply and enter the Guild name')) {
+          if (repliedTo.text.includes('Guild - Reply and enter the Guild name')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
             const guildName = text.toLowerCase();
             const { data: guild } = await db.from('guilds').select(`*`).eq('name', guildName).maybeSingle();
-            console.log(guild);
             if (!guild) throw new Error(`⚠️ there is no guild with this name.`);
             const { data: members } = await db.from('players').select(`guild_id`).eq('guild_id', guild.id);
             if (members.length >= 10) throw new Error(`⚠️ Guild is full.`);
             await db.from('players').update({ guild_id: guild.id }).eq('id', player.id);
-            await sendMsg(`✅ You joined  🏛️ *${toTitleCase(guild.name)}*  guild`);
+            await sendMsg(`✅ You joined  🏛️ *${toTitleCase(guild.name)}*  guild\\.`);
           }
-          if (repliedTo.text.includes('Guild Create - Reply and enter the Guild name')) {
+          if (repliedTo.text.includes('Guild - Reply and enter your Guild name')) {
+            await getSession(chatId, repliedTo.message_id, fromId);
+            const guildName = text.toLowerCase();
+            if (3 > guildName || guildName > 20)
+              throw new Error(`⚠️ name must be between 3 and 20 characters.`);
+            const { data: guild } = await db.from('guilds').select(`*`).eq('name', guildName).maybeSingle();
+            if (guild) throw new Error(`⚠️ this name is already being used by another guild.`);
+
+            const sent = await sendMsg(
+              `
+*ARE YOU SURE\\?*
+
+name: 🏛️ *${toTitleCase(guildName)}*
+cost:  *$10000*`,
+              {
+                buttons: [
+                  [
+                    { text: '✅', callback_data: `guild_create_yes` },
+                    { text: '❌', callback_data: `guild_create_no` },
+                  ],
+                ],
+              },
+            );
+            await db.from('sessions').upsert({
+              id: sent.chat.id + '_' + sent.message_id,
+              player_id: player.id,
+              data: { name: guildName },
+            });
           }
         }
         //------------------------------------------
-        await deleteMessage(TELEGRAM_TOKEN, chatId, repliedTo.message_id);
-        await deleteMessage(TELEGRAM_TOKEN, chatId, body.message.message_id);
         return new Response('OK', { status: 200 });
       }
       // ---------------------- Commands ---------------------- //
@@ -1279,11 +1433,25 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
         const text = body.message.text;
         const textMatch = text.trim().split(/\s+/);
         const player = await verifyPlayer(fromId, fromUsername);
-        async function sendMsg(messageText, { reply = false, buttons = null } = {}) {
+        async function sendMsg(
+          messageText,
+          { reply = false, buttons = null, replyData = null, to = chatId } = {},
+        ) {
           const options = { parse_mode: 'MarkdownV2' };
-          if (reply) options.reply_markup = { force_reply: true, selective: true };
+          if (reply) {
+            options.reply_to_message_id = body.message.message_id;
+            options.reply_markup = { force_reply: true, selective: true };
+          }
           if (buttons) options.reply_markup = { inline_keyboard: buttons };
-          return await sendMessage(TELEGRAM_TOKEN, chatId, messageText, options);
+          const sent = await sendMessage(TELEGRAM_TOKEN, to, messageText, options);
+          if (reply) {
+            await db.from('sessions').upsert({
+              id: to + '_' + sent.message_id,
+              player_id: fromId,
+              data: replyData,
+            });
+          }
+          return sent;
         }
         async function sendImg(photo, { reply = false, buttons = null, caption = null } = {}) {
           const options = { parse_mode: 'MarkdownV2' };
@@ -1627,7 +1795,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           if (adventure) throw new Error('⚠️ You already in an adventure.');
           const items = await getPlayerItems(player.id);
           if (items.length >= 30) throw new Error(`⚠️ Your inventory is full.`);
-          const moneyReward = Math.floor(player.level + Math.random() * (player.level * 0.5));
+          const moneyReward = Math.floor((player.level + Math.random() * (player.level * 0.5)) * 2);
           const xpReward = Math.floor((player.level + Math.random() * (player.level * 0.5)) * 20);
           let rank = 'common';
           const rankChance = Math.floor(Math.random() * 100);
@@ -1774,7 +1942,7 @@ example → 89 43 523
             const { data: guildPlayers } = await db
               .from('players')
               .select(`id`)
-              .eq('guild_id', player.guild.id);
+              .eq('guild_id', player.guild_id);
             const { data: guildDonations } = await db
               .from('guild_donations')
               .select(`*`)
@@ -1795,8 +1963,7 @@ Total donations:  *$${totalDonations}*
             buttons.push([{ text: `💰 Donate   `, callback_data: `guild_donate` }]);
             if (player.guild.owner === player.id) {
               buttons.push([{ text: `📣 Broadcast   `, callback_data: `guild_broadcast` }]);
-              buttons.push([{ text: `👥 Members   `, callback_data: `guild_member_list` }]);
-              buttons.push([{ text: `👑 Transfer Owner   `, callback_data: `guild_transfer` }]);
+              buttons.push([{ text: `👥 Members   `, callback_data: `guild_members` }]);
             } else {
               buttons.push([{ text: `🚶‍➡️ Leave   `, callback_data: `guild_leave` }]);
             }
@@ -1815,7 +1982,7 @@ Total donations:  *$${totalDonations}*
         );
       } else if (err.message.startsWith('❗ ')) {
         await answerCallbackQuery(TELEGRAM_TOKEN, body.callback_query.id, err.message);
-      } else {
+      } else if (err.message !== '🚫') {
         console.error(err);
         await sendMessage(
           TELEGRAM_TOKEN,
@@ -1826,6 +1993,13 @@ Total donations:  *$${totalDonations}*
           message_thread_id: 37,
         });
       }
+    }
+    if (body.callback_query) {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: body.callback_query.id }),
+      });
     }
     return new Response('OK', { status: 200 });
   },

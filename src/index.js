@@ -60,8 +60,32 @@ export default {
               try {
                 const created = new Date(session.created_at);
                 const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
-                if (diffMinutes >= 60 * 12)
+                if (diffMinutes >= 60 * 12) {
                   await db.from('sessions').delete().eq('player_id', session.player_id);
+                }
+              } catch (err) {
+                console.error('Error:', err);
+              }
+            }),
+          );
+        }
+        //------------------------------------------/cooldowns
+        const { data: cooldowns } = await db.from('cooldowns').select('*');
+        if (cooldowns?.length) {
+          await Promise.allSettled(
+            cooldowns.map(async (cooldown) => {
+              try {
+                const created = new Date(cooldown.created_at);
+                const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
+                if (cooldown.type === 'guild broadcast') {
+                  if (diffMinutes >= 60 * 6) {
+                    await db
+                      .from('cooldowns')
+                      .delete()
+                      .eq('player_id', cooldown.player_id)
+                      .eq('type', 'guild broadcast');
+                  }
+                }
               } catch (err) {
                 console.error('Error:', err);
               }
@@ -225,6 +249,7 @@ export default {
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     const body = await request.json();
     const bot = await getBot(TELEGRAM_TOKEN);
+    const now = new Date();
 
     try {
       async function verifyPlayer(id, username, callback = false) {
@@ -546,7 +571,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
         //------------------------------------------/map
         if (data === 'map_main') {
           await editImg(
-            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/game_bot_map.png',
+            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/map.png',
             {
               buttons: [[{ text: 'Dungeons', callback_data: `dungeons` }]],
             },
@@ -565,7 +590,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
           }
           buttons.push([{ text: '⬅️ Back', callback_data: `map_main` }]);
           editImg(
-            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/game_bot_map.png',
+            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/map.png',
             { buttons },
           );
         }
@@ -591,7 +616,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
             const playerPower = Math.round((profile.armor + profile.strength * 5 + profile.stamina * 5) / 3);
             const dunPower = dungeonPower(dungeon.id, true);
             editImg(
-              'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/game_bot_map.png',
+              'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/map.png',
               {
                 caption: `
 *${dungeon.name}*
@@ -615,11 +640,18 @@ Advised Gear for Survival:
             if (isAccepted === 'yes') {
               const { data: cooldown } = await db
                 .from('cooldowns')
-                .select('*')
+                .select('created_at')
                 .eq('player_id', player.id)
                 .eq('type', 'dungeon')
                 .maybeSingle();
-              if (cooldown) throw new Error(`❗ Dungeon cooldown active. Come back later hero!`);
+              if (cooldown) {
+                const created = new Date(cooldown.created_at);
+                const diffMinutes = Math.floor((now - created) / (1000 * 60));
+                throw new Error(
+                  `❗ Dungeon is on cooldown. Come back after ${24 * 60 - diffMinutes} minutes`,
+                );
+              }
+
               const items = await getPlayerItems(fromId);
               const profile = getUserProfile(items, player.level);
 
@@ -644,21 +676,32 @@ Advised Gear for Survival:
             }
           }
         }
-        //------------------------------------------/sell_by_rank
-        if (data === 'sellBy_rank') {
-          const rank = data.split('_')[2];
-          let items = await getPlayerItems(fromId);
-          items = items.filter((item) => item.data.rank === rank);
-          if (!items?.length > 0) throw new Error(`❗ You don't have any ${rank} item.`);
+        //------------------------------------------/sell_by
+        if (data.split('_')[0] === 'sellBy') {
+          if (data.split('_')[1] === 'rank') {
+            const rank = data.split('_')[2];
+            let items = await getPlayerItems(fromId);
+            items = items.filter((item) => item.status === false);
+            if (rank) items = items.filter((item) => item.data.rank === rank);
+            if (!items?.length > 0) throw new Error(`❗ You don't have any unequipped ${rank ?? ''} item.`);
 
-          const price = items.reduce((sum, item) => sum + item.data.price, 0);
-          await Promise.all(items.map((item) => db.from('player_items').delete().eq('id', item.id)));
+            const price = items.reduce((sum, item) => sum + item.data.price, 0);
+            await Promise.all(
+              items.map(async (item) => {
+                await db.from('market').delete().eq('id', item.id);
+                await db.from('player_items').delete().eq('id', item.id);
+              }),
+            );
 
-          await db
-            .from('players')
-            .update({ money: player.money + price })
-            .eq('id', fromId);
-          await answerCallback(`✅ All items with rank of ${rank} sold for $${price}`, true);
+            await db
+              .from('players')
+              .update({ money: player.money + price })
+              .eq('id', fromId);
+            await answerCallback(
+              `✅ All items${rank ? ' with rank of ' + rank : ''} sold for $${price}`,
+              true,
+            );
+          }
         }
         //------------------------------------------/shop
         if (data === 'shop_buy') {
@@ -847,6 +890,18 @@ _*${escapeMarkdownV2('— DUEL ENDED! —')}*_
             if (!player.guild || player.guild.owner !== player.id) {
               throw new Error(`❗ You aren't owner of any guild.`);
             }
+            const { data: cooldown } = await db
+              .from('cooldowns')
+              .select(`created_at`)
+              .eq('player_id', player.id)
+              .eq('type', 'guild broadcast')
+              .maybeSingle();
+            if (cooldown) {
+              const created = new Date(cooldown.created_at);
+              const diffMinutes = Math.floor((now - created) / (1000 * 60));
+              throw new Error(`❗ Broadcast is on cooldown.\nCome back after ${360 - diffMinutes} minutes.`);
+            }
+            await sendMsg('Guild \\- Reply and enter your *Message*', { reply: true });
             if (!player.guild || player.guild.owner !== player.id) {
               throw new Error(`❗ You aren't owner of any guild.`);
             }
@@ -1046,8 +1101,8 @@ Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
           }
           if (repliedTo.text.includes('Dev Global Message - Reply and enter your Message')) {
             await getSession(chatId, repliedTo.message_id, fromId);
-            const message = `*📜 Message from the Guild Master:*\n` + quote(escapeMarkdownV2(text));
-            const { data: players } = await db.from('players').select('*');
+            const message = `*📜 Message from the Guide Master:*\n` + quote(escapeMarkdownV2(text));
+            const { data: players } = await db.from('players').select('id');
             const results = await Promise.allSettled(
               players.map(async (player) => {
                 const sent = await sendMsg(message, { to: player.id });
@@ -1381,6 +1436,35 @@ Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
           }
           if (repliedTo.text.includes('Guild - Reply and enter your Message')) {
             await getSession(chatId, repliedTo.message_id, fromId);
+            if (!player.guild || player.guild.owner !== player.id) {
+              throw new Error(`⚠️ You aren't owner of any guild.`);
+            }
+            const { data: cooldown } = await db
+              .from('cooldowns')
+              .select(`created_at`)
+              .eq('player_id', player.id)
+              .eq('type', 'guild broadcast')
+              .maybeSingle();
+
+            if (cooldown) {
+              const created = new Date(cooldown.created_at);
+              const diffMinutes = Math.floor((now - created) / (1000 * 60));
+              throw new Error(`⚠️ Broadcast is on cooldown.\nCome back after ${360 - diffMinutes} minutes.`);
+            }
+            await db.from('cooldowns').upsert({ type: 'guild broadcast', player_id: player.id });
+
+            const message = `*📜 Message from your Guild Owner:*\n` + quote(escapeMarkdownV2(text));
+            const { data: members } = await db.from('players').select(`id`).eq('guild_id', player.guild_id);
+            const results = await Promise.allSettled(
+              members.map(async (member) => {
+                const sent = await sendMsg(message, { to: member.id });
+                return sent ? 'sent' : 'failed';
+              }),
+            );
+
+            const sentNum = results.filter((r) => r.value === 'sent').length;
+            const cantSentNum = results.length - sentNum;
+            await sendMsg(`✅ Sent for:  ${sentNum}\n❌ Cant send for:  ${cantSentNum}`);
           }
           if (repliedTo.text.includes('Guild - Reply and enter the Guild name')) {
             await getSession(chatId, repliedTo.message_id, fromId);
@@ -1619,18 +1703,10 @@ See all your items with pages \\(⬅️ ➡️\\)
 Each item has:  
 🛡️ Armor \\| 💪 Strength \\| 🩸 Stamina  
 
-Ranks:  
-⚪️ common  
-🟢 uncommon  
-🔵 rare  
-🟣 epic  
-🟠🔥 legendary 🔥
-
 ${escapeMarkdownV2('──────────────────────')}
 🗡 *Equip Item*
 /equip  
-Bot asks you to reply with your *item ID*\\.  
-Equips that item and unequips the old one of same type\\.
+Bot asks you to reply with your *item ID*\\.
 
 ${escapeMarkdownV2('──────────────────────')}
 🧭 *Adventure*
@@ -1645,7 +1721,6 @@ ${escapeMarkdownV2('────────────────────
 🗺️ *Map*  
 /map  
 Explore the world and discover *Dungeons*\\!  
-
 Inside the map\\, choose a dungeon to challenge\\.  
 Each dungeon lasts *3 hours* and tests your strength\\.  
 Be prepared\\, you might die or return victorious with:  
@@ -1680,11 +1755,11 @@ ${escapeMarkdownV2('────────────────────
 🏦 *Market*
 /market \\- View items for sale
 
-Sell item:
+*Sell item:*
 Press *Sell* then reply with item ID then reply with favorite Price to list the item in market\\.
 \\(Requires 5% fee\\)
 
-Buy item:
+*Buy item:*
 Press *Buy* then reply with item ID to purchase\\.
 
 ${escapeMarkdownV2('──────────────────────')}
@@ -1696,14 +1771,23 @@ Opponent can accept or decline\\.
 Winner earns the bet amount \\- loser pays it\\!
 
 ${escapeMarkdownV2('──────────────────────')}
+🏰 *Guild*
+/guild
+Join or create a Guild and grow stronger together\\!
+
+Donate money to level up your Guild\\.
+Each level grants every member:
+*🛡️ \\+5 \\| 💪 \\+1 \\| 🩸 \\+1*
+
+${escapeMarkdownV2('──────────────────────')}
 🧩 *Notes*
 • Inventory limit: 30 items
 • Shop resets daily
 • Market items expire after 1 week
-• Adventure duration: \\~1 hour
-• Dungeon duration: \\~3 hour
-• Dungeon cooldown: \\~24 hours
-• Session expires after \\~12 hours
+• Adventure duration:   1 hour
+• Dungeon duration:   3 hour
+• Dungeon cooldown:   24 hours
+• Session expires after   12 hours
 
 ${escapeMarkdownV2('──────────────────────')}
 🔰 *Item Rank Colors*
@@ -1828,7 +1912,7 @@ arms:  ${rankDisplay(profile.equipped.arms?.data ?? null)}
         //------------------------------------------/map
         if (isCommand(text, 'map')) {
           await sendImg(
-            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/game_bot_map.png',
+            'https://dahmbtmkdwhjnenkwbux.supabase.co/storage/v1/object/public/ForgeCraft-storage/map.png',
             {
               buttons: [[{ text: 'Dungeons', callback_data: `dungeons` }]],
             },
@@ -1865,6 +1949,7 @@ example → 89 43 523
                 { text: '🔵 Rare', callback_data: `sellBy_rank_rare` },
                 { text: '🟣 Epic', callback_data: `sellBy_rank_epic` },
               ],
+              [{ text: '⚫ All', callback_data: `sellBy_rank` }],
             ],
           });
         }

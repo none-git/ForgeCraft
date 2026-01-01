@@ -1,65 +1,91 @@
-
 <!DOCTYPE html>
 <html lang="en" class="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ForgeCraft - Telegram RPG</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=Inter:wght@300..700&family=Noto+Sans:wght@400..900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=Inter:wght@300..700&family=Noto+Sans:wght@400..900&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+      rel="stylesheet"
+    />
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <script>
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "primary": "#C3A38A",
-                        "primary-hover": "#b08e75",
-                        "background-light": "#f5f2ef",
-                        "background-dark": "#14110F", 
-                        "surface-dark": "#1E1A17",
-                        "surface-border": "#38302A",
-                        "text-muted": "#a8a29e",
-                        "rank-common": "#94a3b8",
-                        "rank-uncommon": "#22c55e",
-                        "rank-rare": "#3b82f6",
-                        "rank-epic": "#a855f7",
-                        "rank-legendary": "#eab308",
-                    },
-                    fontFamily: {
-                        "display": ["Space Grotesk", "sans-serif"],
-                        "body": ["Inter", "Noto Sans", "sans-serif"],
-                    },
-                },
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: '#C3A38A',
+              'primary-hover': '#b08e75',
+              'background-light': '#f5f2ef',
+              'background-dark': '#14110F',
+              'surface-dark': '#1E1A17',
+              'surface-border': '#38302A',
+              'text-muted': '#a8a29e',
+              'rank-common': '#94a3b8',
+              'rank-uncommon': '#22c55e',
+              'rank-rare': '#3b82f6',
+              'rank-epic': '#a855f7',
+              'rank-legendary': '#eab308',
             },
-        }
+            fontFamily: {
+              display: ['Space Grotesk', 'sans-serif'],
+              body: ['Inter', 'Noto Sans', 'sans-serif'],
+            },
+          },
+        },
+      };
     </script>
     <style>
-        body { font-family: 'Inter', 'Noto Sans', sans-serif; }
-        h1, h2, h3, h4, h5, h6 { font-family: 'Space Grotesk', sans-serif; }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #14110F; }
-        ::-webkit-scrollbar-thumb { background: #38302A; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #C3A38A; }
-        .pixel-art { image-rendering: pixelated; }
+      body {
+        font-family: 'Inter', 'Noto Sans', sans-serif;
+      }
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        font-family: 'Space Grotesk', sans-serif;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #14110f;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #38302a;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #c3a38a;
+      }
+      .pixel-art {
+        image-rendering: pixelated;
+      }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
-<body class="bg-background-dark text-white selection:bg-primary selection:text-black">
+    <script type="importmap">
+      {
+        "imports": {
+          "react/": "https://esm.sh/react@^19.2.3/",
+          "react": "https://esm.sh/react@^19.2.3",
+          "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+          "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="/index.css" />
+  </head>
+  <body class="bg-background-dark text-white selection:bg-primary selection:text-black">
     <div id="root"></div>
-<script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>

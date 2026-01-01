@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { RANKS } from '../constants';
 
 const FeaturesView: React.FC = () => {
   return (
@@ -146,26 +147,13 @@ const FeaturesView: React.FC = () => {
                 <p className="text-base text-text-muted">Rarity determines power. Hunt for artifacts.</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  {
-                    name: 'Common',
-                    color: 'text-rank-common',
-                    bg: 'bg-rank-common',
-                  },
-                  {
-                    name: 'Uncommon',
-                    color: 'text-rank-uncommon',
-                    bg: 'bg-rank-uncommon',
-                  },
-                  { name: 'Rare', color: 'text-rank-rare', bg: 'bg-rank-rare' },
-                  { name: 'Epic', color: 'text-rank-epic', bg: 'bg-rank-epic' },
-                ].map((rank, i) => (
+                {RANKS.slice(0, -1).map((rank, i) => (
                   <div
                     key={i}
                     className="flex items-center justify-between p-4 rounded-lg border border-surface-border bg-surface-dark"
                   >
                     <span className={`font-bold ${rank.color}`}>{rank.name}</span>
-                    <div className={`size-3 rounded-full ${rank.bg} shadow-md`}></div>
+                    <div className={`size-3 rounded-full bg-${rank.color} shadow-md`}></div>
                   </div>
                 ))}
                 <div className="flex items-center justify-between col-span-1 sm:col-span-2 p-4 rounded-lg border border-rank-legendary/30 bg-rank-legendary/5">

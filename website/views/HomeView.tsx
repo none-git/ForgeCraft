@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { CORE_FEATURES } from '../constants';
 
 const HomeView: React.FC = () => {
   return (
@@ -114,50 +115,7 @@ const HomeView: React.FC = () => {
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[
-              {
-                title: 'Fighting',
-                icon: 'swords',
-                color: 'text-red-500',
-                bg: 'bg-red-500/10',
-                desc: 'Engage in strategic turn-based combat. Fight fearsome monsters and challenge players.',
-              },
-              {
-                title: 'Exploring',
-                icon: 'explore',
-                color: 'text-blue-500',
-                bg: 'bg-blue-500/10',
-                desc: 'Traverse dangerous lands and discover hidden dungeons for great rewards.',
-              },
-              {
-                title: 'Collecting',
-                icon: 'construction',
-                color: 'text-primary',
-                bg: 'bg-primary/10',
-                desc: 'Gather rare resources and craft powerful equipment to enhance your abilities.',
-              },
-              {
-                title: 'Leveling Up',
-                icon: 'trending_up',
-                color: 'text-green-500',
-                bg: 'bg-green-500/10',
-                desc: 'Gain experience from battles. Level up to unlock new skills and become a legend.',
-              },
-              {
-                title: 'Quests',
-                icon: 'map',
-                color: 'text-yellow-500',
-                bg: 'bg-yellow-500/10',
-                desc: 'Embark on epic quests and follow storylines that take you across the world.',
-              },
-              {
-                title: 'Community',
-                icon: 'diversity_3',
-                color: 'text-purple-500',
-                bg: 'bg-purple-500/10',
-                desc: 'Join guilds, trade in a free market, and socialize with thousands of adventurers.',
-              },
-            ].map((feature, idx) => (
+            {CORE_FEATURES.map((feature, idx) => (
               <div
                 key={idx}
                 className="group bg-surface-dark border border-surface-border rounded-xl p-6 hover:border-primary/50 transition-colors duration-300"

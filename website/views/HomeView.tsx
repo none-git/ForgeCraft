@@ -25,17 +25,15 @@ const HomeView: React.FC = () => {
                 </span>
               </h1>
               <p className="text-gray-400 text-lg leading-relaxed max-w-xl">
-                Welcome to the game! You are an adventurer who fights, explores,
-                and collects powerful items to grow stronger!
+                Welcome to the game! You are an adventurer who fights, explores, and collects powerful items
+                to grow stronger!
               </p>
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
                 <a
                   href="https://t.me/ForgeCraftRobot"
                   className="flex items-center justify-center h-12 px-8 bg-primary hover:bg-primary-hover text-surface-dark text-base font-bold rounded-lg transition-all shadow-[0_0_20px_rgba(195,163,138,0.4)] hover:shadow-[0_0_30px_rgba(195,163,138,0.6)]"
                 >
-                  <span className="material-symbols-outlined mr-2">
-                    smart_toy
-                  </span>
+                  <span className="material-symbols-outlined mr-2">smart_toy</span>
                   Enter Telegram Bot
                 </a>
                 <a
@@ -58,14 +56,12 @@ const HomeView: React.FC = () => {
             <div className="order-1 lg:order-2 flex justify-center lg:justify-end relative group">
               <div className="absolute inset-0 bg-gradient-to-tr from-primary/20 to-transparent rounded-2xl transform rotate-3 group-hover:rotate-6 transition-transform duration-500"></div>
               <div className="relative w-full max-w-[500px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-surface-border bg-surface-dark pixel-art">
-                <div className="w-full h-full bg-cover bg-center bg-[url('../pictures/profile.webp')] opacity-60"></div>
+                <div className="w-full h-full bg-cover bg-center bg-[url('https://github.com/none-git/ForgeCraft/blob/main/website/pictures/profile.webp?raw=true')] opacity-60"></div>
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
                 <div className="absolute bottom-6 left-6 right-6 bg-black/80 backdrop-blur-md p-4 rounded-xl border border-white/10">
                   <div className="flex items-center gap-3 mb-2">
                     <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span className="text-xs font-mono text-gray-400">
-                      SYSTEM LOG
-                    </span>
+                    <span className="text-xs font-mono text-gray-400">SYSTEM LOG</span>
                   </div>
                   <p className="text-sm font-mono text-green-400 text-left">
                     &gt; You crafted [Legendary Sword]!
@@ -86,27 +82,19 @@ const HomeView: React.FC = () => {
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center divide-x divide-surface-border/50">
             <div className="p-4">
-              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">
-                100+
-              </div>
+              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">100+</div>
               <div className="text-sm text-gray-400">Active Players</div>
             </div>
             <div className="p-4">
-              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">
-                2K+
-              </div>
+              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">2K+</div>
               <div className="text-sm text-gray-400">Items Crafted</div>
             </div>
             <div className="p-4">
-              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">
-                8
-              </div>
+              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">8</div>
               <div className="text-sm text-gray-400">Dungeons Found</div>
             </div>
             <div className="p-4">
-              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">
-                24/7
-              </div>
+              <div className="text-3xl md:text-4xl font-bold text-white mb-1 font-display">24/7</div>
               <div className="text-sm text-gray-400">Server Uptime</div>
             </div>
           </div>
@@ -117,9 +105,7 @@ const HomeView: React.FC = () => {
       <section className="py-20 bg-background-dark">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-3xl mx-auto mb-16">
-            <h2 className="text-primary font-bold tracking-wider uppercase text-sm mb-3">
-              Core Features
-            </h2>
+            <h2 className="text-primary font-bold tracking-wider uppercase text-sm mb-3">Core Features</h2>
             <h3 className="text-3xl md:text-4xl font-bold text-white mb-6 font-display">
               Master the Mechanics
             </h3>
@@ -179,13 +165,9 @@ const HomeView: React.FC = () => {
                 <div
                   className={`w-12 h-12 ${feature.bg} rounded-lg flex items-center justify-center ${feature.color} mb-4 group-hover:scale-110 transition-transform`}
                 >
-                  <span className="material-symbols-outlined text-3xl">
-                    {feature.icon}
-                  </span>
+                  <span className="material-symbols-outlined text-3xl">{feature.icon}</span>
                 </div>
-                <h4 className="text-xl font-bold text-white mb-3">
-                  {feature.title}
-                </h4>
+                <h4 className="text-xl font-bold text-white mb-3">{feature.title}</h4>
                 <p className="text-gray-400 leading-relaxed">{feature.desc}</p>
               </div>
             ))}
@@ -218,14 +200,10 @@ const HomeView: React.FC = () => {
                         💰 Money Reward: <span className="font-bold">$101</span>
                       </p>
                       <p>
-                        ✨ XP Gained:{' '}
-                        <span className="text-green-400 font-bold">+900</span>
+                        ✨ XP Gained: <span className="text-green-400 font-bold">+900</span>
                       </p>
                       <p>
-                        🎁 Item:{' '}
-                        <span className="text-yellow-500 font-bold">
-                          🔥Boots of Light🔥
-                        </span>
+                        🎁 Item: <span className="text-yellow-500 font-bold">🔥Boots of Light🔥</span>
                       </p>
                     </p>
                   </div>
@@ -261,9 +239,7 @@ const HomeView: React.FC = () => {
                 <div className="bg-[#262626] p-3 border-t border-gray-700 flex gap-2">
                   <div className="h-10 bg-[#1c1c1c] rounded flex-1"></div>
                   <div className="h-10 w-10 bg-primary rounded flex items-center justify-center text-surface-dark">
-                    <span className="material-symbols-outlined text-[18px]">
-                      send
-                    </span>
+                    <span className="material-symbols-outlined text-[18px]">send</span>
                   </div>
                 </div>
               </div>
@@ -274,8 +250,8 @@ const HomeView: React.FC = () => {
                 Strategic Depth
               </h3>
               <p className="text-gray-400 text-lg mb-8">
-                No huge downloads or complex controls. The entire game world
-                lives in your pocket, accessible directly through Telegram.
+                No huge downloads or complex controls. The entire game world lives in your pocket, accessible
+                directly through Telegram.
               </p>
               <ul className="space-y-4">
                 {[
@@ -294,9 +270,7 @@ const HomeView: React.FC = () => {
                 ].map((item, i) => (
                   <li key={i} className="flex items-start gap-3">
                     <div className="min-w-[24px] pt-1 text-primary">
-                      <span className="material-symbols-outlined">
-                        check_circle
-                      </span>
+                      <span className="material-symbols-outlined">check_circle</span>
                     </div>
                     <div>
                       <h5 className="text-white font-bold">{item.title}</h5>
@@ -320,17 +294,15 @@ const HomeView: React.FC = () => {
             Ready for Adventure?
           </h2>
           <p className="text-xl text-gray-400 mb-10 max-w-2xl mx-auto">
-            Join thousands of other adventurers and write your own legend in the
-            world of ForgeCraft. Start your journey for free today.
+            Join thousands of other adventurers and write your own legend in the world of ForgeCraft. Start
+            your journey for free today.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
             <a
               href="https://t.me/ForgeCraftRobot"
               className="flex items-center justify-center h-14 px-10 bg-primary hover:bg-primary-hover text-surface-dark text-lg font-bold rounded-xl transition-all shadow-lg hover:-translate-y-1"
             >
-              <span className="material-symbols-outlined mr-2">
-                rocket_launch
-              </span>
+              <span className="material-symbols-outlined mr-2">rocket_launch</span>
               Start on Telegram
             </a>
             <Link

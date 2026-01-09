@@ -39,106 +39,63 @@ export default {
           //------------------------------------------/shop
           await db.from('shop').delete().not('id', 'is', null);
           const forbiddenRanks = ['legendary', 'common'];
-          let i = 0;
-          while (i < 6) {
+          const shopItems = [];
+          while (shopItems.length < 6) {
             const item = items[Math.floor(Math.random() * items.length)];
-            if (!forbiddenRanks.includes(item.rank)) {
-              await db.from('shop').insert([{ item_id: item.id }]);
-              i++;
-            }
+            if (forbiddenRanks.includes(item.rank)) continue;
+            shopItems.push({ item_id: item.id });
           }
+          await db.from('shop').insert(shopItems);
           //------------------------------------------/dungeons
           await db.from('cooldowns').delete().eq('type', 'dungeon');
           //------------------------------------------
           await db.from('settings').upsert({ key: 'lastDailyRun', value: currentDate });
         }
         //------------------------------------------/sessions
-        const { data: sessions } = await db.from('sessions').select('*');
-        if (sessions?.length) {
-          await Promise.allSettled(
-            sessions.map(async (session) => {
-              try {
-                const created = new Date(session.created_at);
-                const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
-                if (diffMinutes >= 60 * 12) {
-                  await db.from('sessions').delete().eq('player_id', session.player_id);
-                }
-              } catch (err) {
-                console.error('Error:', err);
-              }
-            }),
-          );
-        }
+        await db
+          .from('sessions')
+          .delete()
+          .lt('created_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
         //------------------------------------------/cooldowns
-        const { data: cooldowns } = await db.from('cooldowns').select('*');
-        if (cooldowns?.length) {
-          await Promise.allSettled(
-            cooldowns.map(async (cooldown) => {
-              try {
-                const created = new Date(cooldown.created_at);
-                const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
-                if (cooldown.type === 'guild broadcast') {
-                  if (diffMinutes >= 60 * 6) {
-                    await db
-                      .from('cooldowns')
-                      .delete()
-                      .eq('player_id', cooldown.player_id)
-                      .eq('type', 'guild broadcast');
-                  }
-                }
-              } catch (err) {
-                console.error('Error:', err);
-              }
-            }),
-          );
-        }
+        await db
+          .from('cooldowns')
+          .delete()
+          .eq('type', 'guild broadcast')
+          .lt('created_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString());
         //------------------------------------------/market
-        const { data: actions } = await db.from('market').select('*');
-        if (actions?.length) {
-          await Promise.allSettled(
-            actions.map(async (action) => {
-              try {
-                const created = new Date(action.created_at);
-                const diffMinutes = Math.floor((now - created) / (1000 * 60));
-                if (diffMinutes >= 60 * 24 * 7) {
-                  await db.from('market').delete().eq('id', action.id);
-                }
-              } catch (err) {
-                console.error('Error:', err);
-              }
-            }),
-          );
-        }
+        await db
+          .from('market')
+          .delete()
+          .lt('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+
         //------------------------------------------/adventure
         const { data: adventures } = await db
           .from('adventures')
-          .select('*, item_reward:items(*), player:players(*)');
-        if (adventures?.length) {
-          await Promise.allSettled(
-            adventures.map(async (adventure) => {
-              try {
-                const player = adventure.player;
-                const created = new Date(adventure.created_at);
-                const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
-                if (diffMinutes >= 60) {
-                  const playerUpdate = { money: player.money + adventure.money_reward };
-                  const playerXP = player.xp + adventure.xp_reward;
-                  if (xpForNextLevel(player.level) <= playerXP) {
-                    playerUpdate.level = player.level + 1;
-                    playerUpdate.xp = playerXP - xpForNextLevel(player.level);
-                  } else {
-                    playerUpdate.xp = playerXP;
-                  }
+          .select(
+            'id, player_id, money_reward, xp_reward, created_at, item_reward:items(id, name, rank), player:players(id, money, xp, level)',
+          )
+          .lt('created_at', new Date(Date.now() - 60 * 60 * 1000).toISOString());
+        for (const adventure of adventures ?? []) {
+          try {
+            const player = adventure.player;
+            const playerUpdate = { money: player.money + adventure.money_reward, level: player.level };
+            let playerXP = player.xp + adventure.xp_reward;
+            while (playerXP >= xpForNextLevel(playerUpdate.level)) {
+              playerXP -= xpForNextLevel(playerUpdate.level);
+              playerUpdate.level++;
+            }
+            playerUpdate.xp = playerXP;
 
-                  await db.from('adventures').delete().eq('id', adventure.id);
-                  await db
-                    .from('player_items')
-                    .insert([{ player_id: player.id, item_id: adventure.item_reward.id }]);
-                  await db.from('players').update(playerUpdate).eq('id', player.id);
-                  await sendMessage(
-                    TELEGRAM_TOKEN,
-                    adventure.player.id,
-                    `
+            await db.from('players').update(playerUpdate).eq('id', player.id);
+            await db
+              .from('player_items')
+              .insert([{ player_id: player.id, item_id: adventure.item_reward.id }]);
+            await db.from('adventures').delete().eq('id', adventure.id);
+
+            await sendMessage(
+              TELEGRAM_TOKEN,
+              adventure.player.id,
+              `
 *Adventure Completed\\!*
 
 *Your rewards:*
@@ -146,98 +103,120 @@ export default {
 ✨ XP Gained:  *${adventure.xp_reward}XP*
 🎁 Item:  *${rankDisplay(adventure.item_reward)}*
               `,
-                    { parse_mode: 'MarkdownV2' },
-                  );
-                }
-              } catch (err) {
-                console.error('Adventure error for player:', adventure.player.id, err);
-              }
-            }),
-          );
+              { parse_mode: 'MarkdownV2' },
+            );
+          } catch (err) {
+            console.error('Adventure error:', adventure.id, err);
+          }
         }
         //------------------------------------------/dungeons
-        const { data: playerDungeons } = await db.from('player_dungeons').select('*, player:players(*)');
-        if (playerDungeons?.length) {
-          const { data: dungeons } = await db.from('dungeons').select('*');
-          await Promise.allSettled(
-            playerDungeons.map(async (dungeon) => {
-              try {
-                const dunLvl = dungeon.dungeon_id;
-                const player = dungeon.player;
-                const created = new Date(dungeon.created_at);
-                const diffMinutes = Math.floor((now - created) / (1000 * 60)) + 1;
-                if (diffMinutes % 17 === 0) {
-                  const { data: items } = await db
-                    .from('player_items')
-                    .select(`*, data:items(*)`)
-                    .eq('player_id', player.id);
-                  let profile = {};
-                  if (player.guild_id) {
-                    const { data: guildDonations } = await db
-                      .from('guild_donations')
-                      .select(`amount`)
-                      .eq('guild_id', player.guild_id);
-                    const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
-                    const guildProfile = getGuildProfile(totalDonations);
-                    profile = getUserProfile(items, player.level, guildProfile.level);
-                  } else {
-                    profile = getUserProfile(items, player.level);
-                  }
-                  const playerPower = Math.floor(
-                    (profile.armor + profile.strength * 5 + profile.stamina * 5) / 3,
-                  );
-                  if (Math.random() * (playerPower + dungeonPower(dunLvl) / 10) > playerPower) {
-                    await db.from('player_dungeons').delete().eq('player_id', player.id);
-                    await sendMessage(
-                      TELEGRAM_TOKEN,
-                      player.id,
-                      `
-*Dungeon*
->You fought bravely\\, but the darkness claimed you\\.
-                  `,
-                      { parse_mode: 'MarkdownV2' },
-                    );
-                  }
-                }
-                if (diffMinutes >= 60 * 3) {
-                  let dungeonItems = items.filter((item) => !['common'].includes(item.rank));
-                  const quarterSize = Math.ceil(dungeonItems.length / dungeons.length);
-                  const start = (dunLvl - 1) * quarterSize;
-                  dungeonItems = dungeonItems.slice(start, start + quarterSize);
+        // 1️⃣ load active dungeons + players
+        const { data: playerDungeons } = await db
+          .from('player_dungeons')
+          .select('id, player_id, dungeon_id, created_at, player:players(*)');
+        if (!playerDungeons?.length) return;
+        // 2️⃣ preload shared data
+        const playerIds = [...new Set(playerDungeons.map((d) => d.player_id))];
+        const [{ data: allItems }, { data: allGuildDonations }, { data: dungeons }] = await Promise.all([
+          db
+            .from('player_items')
+            .select('player_id, item_id, status, data:items(*)')
+            .eq('status', 'true')
+            .in('player_id', playerIds),
+          db.from('guild_donations').select('guild_id, amount'),
+          db.from('dungeons').select('id'),
+        ]);
+        // 3️⃣ index in memory
+        const itemsByPlayer = new Map();
+        for (const i of allItems ?? []) {
+          const arr = itemsByPlayer.get(i.player_id) ?? [];
+          arr.push(i);
+          itemsByPlayer.set(i.player_id, arr);
+        }
+        const donationsByGuild = new Map();
+        for (const d of allGuildDonations ?? []) {
+          donationsByGuild.set(d.guild_id, (donationsByGuild.get(d.guild_id) ?? 0) + d.amount);
+        }
+        // 4️⃣ side-effects buffers
+        const playerUpdates = [];
+        const itemInserts = [];
+        const dungeonDeletes = [];
+        const messages = [];
+        // 5️⃣ main loop (NO DB CALLS)
+        for (const dungeon of playerDungeons) {
+          try {
+            const dunLvl = dungeon.dungeon_id;
+            const player = dungeon.player;
+            const diffMinutes = Math.floor((now - new Date(dungeon.created_at).getTime()) / (1000 * 60)) + 1;
+            if (diffMinutes % 17 === 0) {
+              const items = itemsByPlayer.get(player.id) ?? [];
+              let profile = {};
+              if (player.guild_id) {
+                const guildProfile = getGuildProfile(donationsByGuild.get(player.guild_id));
+                profile = getUserProfile(items, player.level, guildProfile.level);
+              } else {
+                profile = getUserProfile(items, player.level);
+              }
+              const playerPower = Math.floor(
+                (profile.armor + profile.strength * 5 + profile.stamina * 5) / 3,
+              );
+              const P = playerPower / (playerPower + dungeonPower(dunLvl));
+              const stepSuccessChance = Math.pow(P, 1 / 10);
 
-                  const xpReward = Math.floor((dunLvl + Math.random() * (dunLvl * 0.5)) * 500);
-                  const itemReward = dungeonItems[Math.floor(Math.random() * dungeonItems.length)];
+              if (Math.random() > stepSuccessChance) {
+                dungeonDeletes.push(dungeon.id);
+                messages.push({
+                  chatId: player.id,
+                  text: `*Dungeon*\n>You fought bravely\\, but the darkness claimed you\\.`,
+                });
+              }
+            }
+            if (diffMinutes >= 60 * 3) {
+              let dungeonItems = items.filter((i) => i.rank !== 'common');
+              const chunkSize = Math.ceil(dungeonItems.length / dungeons.length);
+              const start = (dunLvl - 1) * chunkSize;
+              dungeonItems = dungeonItems.slice(start, start + chunkSize);
 
-                  const playerUpdate = {};
-                  let playerXP = player.xp + xpReward;
-                  playerUpdate.level = player.level;
-                  while (xpForNextLevel(playerUpdate.level) <= playerXP) {
-                    playerUpdate.level += 1;
-                    playerXP -= xpForNextLevel(playerUpdate.level);
-                  }
-                  playerUpdate.xp = playerXP;
+              const itemReward = dungeonItems[Math.floor(Math.random() * dungeonItems.length)];
+              const xpReward = Math.floor((dunLvl + Math.random() * dunLvl * 0.5) * 500);
 
-                  await db.from('player_dungeons').delete().eq('id', dungeon.id);
-                  await db.from('player_items').insert([{ player_id: player.id, item_id: itemReward.id }]);
-                  await db.from('players').update(playerUpdate).eq('id', player.id);
-                  await sendMessage(
-                    TELEGRAM_TOKEN,
-                    player.id,
-                    `
+              let xp = player.xp + xpReward;
+              let level = player.level;
+              while (xp >= xpForNextLevel(level)) {
+                xp -= xpForNextLevel(level);
+                level++;
+              }
+              player.xp = xp;
+              player.level = level;
+
+              playerUpdates.push(player);
+              itemInserts.push({ player_id: player.id, item_id: itemReward.id });
+              dungeonDeletes.push(dungeon.id);
+              messages.push({
+                chatId: player.id,
+                text: `
 *Dungeon Completed\\!*
 
-*Your rewards:*
-✨ XP Gained:  *${xpReward}XP*
-🎁 Item:  *${rankDisplay(itemReward)}*
-              `,
-                    { parse_mode: 'MarkdownV2' },
-                  );
-                }
-              } catch (err) {
-                console.error('Dungeon error for player:', dungeon.player_id, err);
-              }
-            }),
-          );
+✨ XP Gained: *${xpReward}XP*
+🎁 Item: *${rankDisplay(itemReward)}*
+                `,
+              });
+            }
+          } catch (err) {
+            console.error('Dungeon error:', dungeon.id, err);
+          }
+        }
+        // 6️⃣ apply DB changes (batch)
+        await Promise.all([
+          playerUpdates.length && db.from('players').upsert(playerUpdates),
+          itemInserts.length && db.from('player_items').insert(itemInserts),
+          dungeonDeletes.length && db.from('player_dungeons').delete().in('id', dungeonDeletes),
+        ]);
+        // 7️⃣ send messages (outside DB pressure)
+        for (const m of messages) {
+          await sendMessage(TELEGRAM_TOKEN, m.chatId, m.text, {
+            parse_mode: 'MarkdownV2',
+          });
         }
       })(),
     );
@@ -652,16 +631,10 @@ Advised Gear for Survival:
                 );
               }
 
-              const items = await getPlayerItems(fromId);
-              const profile = getUserProfile(items, player.level);
-
               await db.from('cooldowns').upsert({ type: 'dungeon', player_id: player.id });
               await db.from('player_dungeons').upsert({
                 player_id: fromId,
                 dungeon_id: dungeon.id,
-                armor: profile.armor,
-                strength: profile.strength,
-                stamina: profile.stamina,
               });
 
               const dungeonTxt = [

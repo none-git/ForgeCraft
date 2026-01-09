@@ -182,7 +182,7 @@ export function quote(text) {
   if (!text) return '';
   return text
     .split('\n')
-    .map((line) => `> ${line}`)
+    .map((line) => `>${line}`)
     .join('\n');
 }
 export function getUserProfile(items, playerLevel, dungeonLevel = 0) {

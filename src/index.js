@@ -29,44 +29,6 @@ export default {
     const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
     ctx.waitUntil(
       (async () => {
-        const { data: items } = await db.from('items').select('*').order('price', { ascending: true });
-        const now = new Date();
-        //------------------------------------------|DAILY
-        const currentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tehran' });
-        const { data } = await db.from('settings').select('value').eq('key', 'lastDailyRun').maybeSingle();
-        const lastRun = data?.value;
-        if (lastRun !== currentDate) {
-          //------------------------------------------/shop
-          await db.from('shop').delete().not('id', 'is', null);
-          const forbiddenRanks = ['legendary', 'common'];
-          const shopItems = [];
-          while (shopItems.length < 6) {
-            const item = items[Math.floor(Math.random() * items.length)];
-            if (forbiddenRanks.includes(item.rank)) continue;
-            shopItems.push({ item_id: item.id });
-          }
-          await db.from('shop').insert(shopItems);
-          //------------------------------------------/dungeons
-          await db.from('cooldowns').delete().eq('type', 'dungeon');
-          //------------------------------------------
-          await db.from('settings').upsert({ key: 'lastDailyRun', value: currentDate });
-        }
-        //------------------------------------------/sessions
-        await db
-          .from('sessions')
-          .delete()
-          .lt('created_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString());
-        //------------------------------------------/cooldowns
-        await db
-          .from('cooldowns')
-          .delete()
-          .eq('type', 'guild broadcast')
-          .lt('created_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString());
-        //------------------------------------------/market
-        await db
-          .from('market')
-          .delete()
-          .lt('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
         //------------------------------------------/adventure
         const { data: adventures } = await db
           .from('adventures')

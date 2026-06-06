@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy --name telegram-forgecraft-test-bot",
-    "deploy:main": "wrangler deploy --name telegram-forgecraft-bot",
+    "deploy:main": "wrangler deploy --name forgecraft",
     "tail": "wrangler tail telegram-forgecraft-test-bot",
-    "tail:main": "wrangler tail telegram-forgecraft-bot"
+    "tail:main": "wrangler tail forgecraft"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.19",

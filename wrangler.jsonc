@@ -1,8 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "forgecraft",
   "main": "src/index.js",
   "compatibility_date": "2025-10-08",
-  "observability": {
-    "enabled": true
-  }
+  "observability": { "enabled": true },
 }

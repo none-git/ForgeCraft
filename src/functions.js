@@ -2,6 +2,28 @@ export async function getBot(TELEGRAM_TOKEN) {
   const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`);
   return await res.json();
 }
+export async function getChatMember(TELEGRAM_TOKEN, chatId, userId) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getChatMember`;
+  const body = {
+    chat_id: chatId,
+    user_id: userId,
+  };
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    if (data.description !== 'Bad Request: chat not found') {
+      console.error('Telegram getChatMember error:', data);
+      return data.result;
+    }
+  }
+
+  return data.result;
+}
 export async function sendMessage(TELEGRAM_TOKEN, chatId, text, options = {}) {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   const body = {
@@ -293,4 +315,75 @@ export function toTitleCase(str) {
     .split(' ')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+export async function duel(ctx, db, player, pp, target, tp, bet, { baseChatId, baseMessageId }, editMsg) {
+  const text1 = `
+@${escapeMarkdownV2(player.username)}
+🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
+
+                              _*VS*_
+@${escapeMarkdownV2(target.username)}
+🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
+            `;
+  await editMsg(text1);
+  if (baseMessageId) await editMsg(text1, { chatID: baseChatId, messageID: baseMessageId });
+  ctx.waitUntil(
+    (async () => {
+      await delay(2500);
+      const text2 = `
+@${escapeMarkdownV2(player.username)}
+🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
+
+                    _*${escapeMarkdownV2('— FIGHT! —')}*_
+@${escapeMarkdownV2(target.username)}
+🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
+                `;
+      await editMsg(text2);
+      if (baseMessageId) await editMsg(text2, { chatID: baseChatId, messageID: baseMessageId });
+      let i = 0;
+      while (i < 15 && pp.hp > 0 && tp.hp > 0) {
+        const attacker = Math.random() < 0.5;
+        let attackSide = '';
+        if (attacker) {
+          tp.hp -= pp.dps * tp.dpsTake;
+          if (tp.hp < 0) tp.hp = 0;
+          attackSide = '➡️🗡️';
+        } else {
+          pp.hp -= tp.dps * pp.dpsTake;
+          if (pp.hp < 0) pp.hp = 0;
+          attackSide = '🗡️⬅️';
+        }
+        await delay(1050);
+        const text3 = `
+*Round ${i + 1}*
+@${escapeMarkdownV2(player.username)}     ${attackSide}     @${escapeMarkdownV2(target.username)}
+
+HP: *${parseInt(pp.hp)}*                             HP: *${parseInt(tp.hp)}*
+DPS: *${pp.dps}*                             DPS: *${tp.dps}*
+                  `;
+        await editMsg(text3);
+        if (baseMessageId) await editMsg(text3, { chatID: baseChatId, messageID: baseMessageId });
+        i++;
+      }
+
+      const winner = pp.hp > tp.hp ? player : target;
+      const loser = pp.hp < tp.hp ? player : target;
+      await db
+        .from('players')
+        .update({ money: winner.money + bet })
+        .eq('id', winner.id);
+      await db
+        .from('players')
+        .update({ money: loser.money - bet })
+        .eq('id', loser.id);
+      await delay(1050);
+      const text4 = `
+_*${escapeMarkdownV2('— DUEL ENDED! —')}*_
+
+*WINNER:* @${escapeMarkdownV2(winner.username)}
+                `;
+      await editMsg(text4);
+      if (baseMessageId) await editMsg(text4, { chatID: baseChatId, messageID: baseMessageId });
+    })(),
+  );
 }

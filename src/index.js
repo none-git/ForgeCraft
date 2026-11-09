@@ -18,9 +18,13 @@ import {
   dungeonPower,
   delay,
   toTitleCase,
+  duel,
+  getChatMember,
 } from './functions';
 import { createClient } from '@supabase/supabase-js';
 const ADMINS = [1425784815];
+const randomDuelBet = 1000;
+const randomDuelScoreRange = 0.5;
 
 export default {
   // ========================== Scheduled ========================== //
@@ -67,7 +71,7 @@ export default {
               { parse_mode: 'MarkdownV2' },
             );
           } catch (err) {
-            console.error('Adventure error:', adventure.id, err);
+            console.error('Adventure error:', adventure.id, err.message);
           }
         }
         //------------------------------------------/dungeons
@@ -95,9 +99,8 @@ export default {
           itemsByPlayer.set(i.player_id, arr);
         }
         const donationsByGuild = new Map();
-        for (const d of allGuildDonations ?? []) {
+        for (const d of allGuildDonations ?? [])
           donationsByGuild.set(d.guild_id, (donationsByGuild.get(d.guild_id) ?? 0) + d.amount);
-        }
         // 4️⃣ side-effects buffers
         const playerUpdates = [];
         const itemInserts = [];
@@ -108,7 +111,8 @@ export default {
           try {
             const dunLvl = dungeon.dungeon_id;
             const player = dungeon.player;
-            const diffMinutes = Math.floor((now - new Date(dungeon.created_at).getTime()) / (1000 * 60)) + 1;
+            const diffMinutes =
+              Math.floor((Date.now() - new Date(dungeon.created_at).getTime()) / (1000 * 60)) + 1;
             if (diffMinutes % 17 === 0) {
               const items = itemsByPlayer.get(player.id) ?? [];
               let profile = {};
@@ -133,7 +137,7 @@ export default {
               }
             }
             if (diffMinutes >= 60 * 3) {
-              let dungeonItems = items.filter((i) => i.rank !== 'common');
+              let { data: dungeonItems } = await db.from('items').select('*').neq('rank', 'common');
               const chunkSize = Math.ceil(dungeonItems.length / dungeons.length);
               const start = (dunLvl - 1) * chunkSize;
               dungeonItems = dungeonItems.slice(start, start + chunkSize);
@@ -164,7 +168,7 @@ export default {
               });
             }
           } catch (err) {
-            console.error('Dungeon error:', dungeon.id, err);
+            console.error('Dungeon error:', dungeon.id, err.message);
           }
         }
         // 6️⃣ apply DB changes (batch)
@@ -174,11 +178,10 @@ export default {
           dungeonDeletes.length && db.from('player_dungeons').delete().in('id', dungeonDeletes),
         ]);
         // 7️⃣ send messages (outside DB pressure)
-        for (const m of messages) {
+        for (const m of messages)
           await sendMessage(TELEGRAM_TOKEN, m.chatId, m.text, {
             parse_mode: 'MarkdownV2',
           });
-        }
       })(),
     );
   },
@@ -668,6 +671,7 @@ Advised Gear for Survival:
                 messageID: baseMessageId,
               });
           } else if (isAccepted === 'yes') {
+            const baseChatId = session.data.baseChatId;
             const baseMessageId = session.data.baseMessageId;
             const bet = session.data.bet;
             const player = session.data.player;
@@ -705,76 +709,15 @@ Advised Gear for Survival:
             tp.hp = tp.stamina * 10;
             tp.dps = tp.strength;
             tp.dpsTake = (4000 - tp.armor) / 4000;
-
-            const text1 = `
-@${escapeMarkdownV2(player.username)}
-🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
-
-                              _*VS*_
-@${escapeMarkdownV2(target.username)}
-🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
-            `;
-            await editMsg(text1);
-            if (baseMessageId) await editMsg(text1, { chatID: player.id, messageID: baseMessageId });
-            ctx.waitUntil(
-              (async () => {
-                await delay(2500);
-                const text2 = `
-@${escapeMarkdownV2(player.username)}
-🛡️: *${pp.armor}*    \\|    💪: *${pp.strength}*    \\|    🩸: *${pp.stamina}*
-
-                    _*${escapeMarkdownV2('— FIGHT! —')}*_
-@${escapeMarkdownV2(target.username)}
-🛡️: *${tp.armor}*    \\|    💪: *${tp.strength}*    \\|    🩸: *${tp.stamina}*
-                `;
-                await editMsg(text2);
-                if (baseMessageId) await editMsg(text2, { chatID: player.id, messageID: baseMessageId });
-                let i = 0;
-                while (i < 15 && pp.hp > 0 && tp.hp > 0) {
-                  const attacker = Math.random() < 0.5;
-                  let attackSide = '';
-                  if (attacker) {
-                    tp.hp -= pp.dps * tp.dpsTake;
-                    if (tp.hp < 0) tp.hp = 0;
-                    attackSide = '➡️🗡️';
-                  } else {
-                    pp.hp -= tp.dps * pp.dpsTake;
-                    if (pp.hp < 0) pp.hp = 0;
-                    attackSide = '🗡️⬅️';
-                  }
-                  await delay(1050);
-                  const text3 = `
-*Round ${i + 1}*
-@${escapeMarkdownV2(player.username)}     ${attackSide}     @${escapeMarkdownV2(target.username)}
-
-HP: *${parseInt(pp.hp)}*                             HP: *${parseInt(tp.hp)}*
-DPS: *${pp.dps}*                             DPS: *${tp.dps}*
-                  `;
-                  await editMsg(text3);
-                  if (baseMessageId) await editMsg(text3, { chatID: player.id, messageID: baseMessageId });
-                  i++;
-                }
-
-                const winner = pp.hp > tp.hp ? player : target;
-                const loser = pp.hp < tp.hp ? player : target;
-                await db
-                  .from('players')
-                  .update({ money: winner.money + bet })
-                  .eq('id', winner.id);
-                await db
-                  .from('players')
-                  .update({ money: loser.money - bet })
-                  .eq('id', loser.id);
-                await delay(1050);
-                const text4 = `
-_*${escapeMarkdownV2('— DUEL ENDED! —')}*_
-
-*WINNER:* @${escapeMarkdownV2(winner.username)}
-                `;
-                await editMsg(text4);
-                if (baseMessageId) await editMsg(text4, { chatID: player.id, messageID: baseMessageId });
-              })(),
-            );
+            await duel(ctx, db, player, pp, target, tp, bet, { baseChatId, baseMessageId }, editMsg);
+          }
+        }
+        //------------------------------------------/random_duel
+        if (data.split('_')[0] === 'randomDuel') {
+          const actionType = data.split('_')[1];
+          if (actionType === 'cancel') {
+            await db.from('duel').delete().eq('player_id', player.id);
+            await deleteMessage(TELEGRAM_TOKEN, chatId, messageId);
           }
         }
         //------------------------------------------/leaderboard
@@ -985,7 +928,7 @@ Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
         });
         return new Response('OK', { status: 200 });
       }
-      // --------------------- ForceReplys --------------------- //
+      // --------------------- ForceReplies --------------------- //
       if (body.message?.reply_to_message?.text) {
         const fromId = body.message.from.id;
         const fromUsername = body.message.from.username;
@@ -1290,8 +1233,8 @@ Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
             if (player.id === target.id) throw new Error(`⚠️ You can't duel with yourself.`);
             let sent;
             let baseMessage;
-            console.log(String(chatId)[0], chatId);
-            if (String(chatId)[0] === '-') {
+            const isInGroup = await getChatMember(TELEGRAM_TOKEN, chatId, target.id);
+            if (String(chatId)[0] === '-' && isInGroup?.status == 'creator') {
               sent = await sendMsg(
                 `
   *DUEL REQUEST\\!*
@@ -1330,11 +1273,16 @@ Transfer of ownership to @${escapeMarkdownV2(member.username)}`,
               );
               baseMessage = await sendMsg(`⏳ Waiting for opponent to accept\\.\\.\\.`);
             }
-
             await db.from('sessions').upsert({
               id: sent.chat.id + '_' + sent.message_id,
               player_id: target.id,
-              data: { bet: session.data.bet, player, target, baseMessageId: baseMessage?.message_id },
+              data: {
+                bet: session.data.bet,
+                player,
+                target,
+                baseChatId: baseMessage?.chat.id,
+                baseMessageId: baseMessage?.message_id,
+              },
             });
           }
         }
@@ -1590,6 +1538,9 @@ ${escapeMarkdownV2('────────────────────
 Opponent can accept or decline\\.
 Winner earns the bet amount \\- loser pays it\\!
 
+/random\\_duel
+The game randomly selects players from the duel queue for you. The bet amount for random duels is *$${randomDuelBet}*.
+
 ${escapeMarkdownV2('──────────────────────')}
 🏰 *Guild*
 /guild
@@ -1795,6 +1746,103 @@ example → 89 43 523
         //------------------------------------------/duel
         if (isCommand(text, 'duel')) {
           await sendMsg('Duel \\- Reply and enter the *Bet amount*', { reply: true });
+        }
+        //------------------------------------------/random_duel
+        if (isCommand(text, 'random_duel')) {
+          if (player.money < randomDuelBet)
+            throw new Error(`⚠️ You don't have enough money to pay the bet. Duel bet is $${randomDuelBet}`);
+          const { data: duelQueue } = await db.from('duel').select(`*, player:players(*)`);
+          if (duelQueue.some((d) => d.player_id == player.id))
+            throw new Error('⚠️ Your name is already in the duel queue.');
+          let pp = {};
+          const playerItems = await getPlayerItems(player.id);
+          if (player.guild_id) {
+            const { data: guildDonations } = await db
+              .from('guild_donations')
+              .select(`amount`)
+              .eq('guild_id', player.guild_id);
+            const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+            const guildProfile = getGuildProfile(totalDonations);
+            pp = getUserProfile(playerItems, player.level, guildProfile.level);
+          } else pp = getUserProfile(playerItems, player.level);
+          pp.hp = pp.stamina * 10;
+          pp.dps = pp.strength;
+          pp.dpsTake = (4000 - pp.armor) / 4000;
+          pp.score = pp.armor + pp.strength * 5 + pp.stamina * 5;
+
+          const filteredDuelQueue = duelQueue.filter(
+            (d) =>
+              Math.abs(d.player_score - pp.score) <= ((d.player_score + pp.score) * randomDuelScoreRange) / 2,
+          );
+          if (filteredDuelQueue.length) {
+            const bestMatch = filteredDuelQueue.reduce(
+              (best, current) =>
+                Math.abs(current.player_score - pp.score) < Math.abs(best.player_score - pp.score)
+                  ? current
+                  : best,
+              filteredDuelQueue[0],
+            );
+            const baseChatId = bestMatch.base_chat_id;
+            const baseMessageId = bestMatch.base_message_id;
+            const target = bestMatch.player;
+            await db.from('duel').delete().eq('player_id', target.id);
+
+            let tp = {};
+            const targetItems = await getPlayerItems(target.id);
+            if (target.guild_id) {
+              const { data: guildDonations } = await db
+                .from('guild_donations')
+                .select(`amount`)
+                .eq('guild_id', target.guild_id);
+              const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              tp = getUserProfile(targetItems, target.level, guildProfile.level);
+            } else tp = getUserProfile(targetItems, target.level);
+            tp.hp = tp.stamina * 10;
+            tp.dps = tp.strength;
+            tp.dpsTake = (4000 - tp.armor) / 4000;
+
+            const sent = await sendMsg('Loading\\.\\.\\.');
+            await duel(
+              ctx,
+              db,
+              player,
+              pp,
+              target,
+              tp,
+              randomDuelBet,
+              { baseChatId: sent.chat.id, baseMessageId: sent.message_id },
+              async (messageText, { chatID = baseChatId, messageID = baseMessageId } = {}) => {
+                return await editMessage(TELEGRAM_TOKEN, chatID, messageID, messageText, {
+                  parse_mode: 'MarkdownV2',
+                });
+              },
+            );
+          } else {
+            let profile = {};
+            const items = await getPlayerItems(player.id);
+            if (player.guild_id) {
+              const { data: guildDonations } = await db
+                .from('guild_donations')
+                .select(`amount`)
+                .eq('guild_id', player.guild_id);
+              const totalDonations = guildDonations.reduce((sum, donate) => sum + donate.amount, 0);
+              const guildProfile = getGuildProfile(totalDonations);
+              profile = getUserProfile(items, player.level, guildProfile.level);
+            } else profile = getUserProfile(items, player.level);
+            const playerScore = profile.armor + profile.strength * 5 + profile.stamina * 5;
+            const sent = await sendMsg('🔍 In search of a worthy opponent\\.\\.\\.', {
+              buttons: [[{ text: 'Cancel', callback_data: `randomDuel_cancel` }]],
+            });
+            await db.from('duel').insert([
+              {
+                player_id: fromId,
+                player_score: playerScore,
+                base_chat_id: sent.chat.id,
+                base_message_id: sent.message_id,
+              },
+            ]);
+          }
         }
         //------------------------------------------/leaderboard
         if (isCommand(text, 'leaderboard')) {
